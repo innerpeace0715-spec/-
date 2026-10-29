@@ -23,9 +23,20 @@ ffmpeg -loglevel error -f lavfi -i testsrc2=size=320x240 -frames:v 1 "$fixtures/
 cp "$fixtures/photo.jpg" "$fixtures/photo-copy.jpg"
 printf 'U-file self-test\n' > "$fixtures/notes.txt"
 printf '%%PDF-1.4\n%%%%EOF\n' > "$fixtures/report.pdf"
+# Shared storage is mounted a little after boot completes; wait until it takes writes.
+for attempt in $(seq 1 30); do
+  adb shell 'mkdir -p /sdcard/Download && touch /sdcard/Download/.ufile-probe && rm /sdcard/Download/.ufile-probe' >/dev/null 2>&1 && break
+  sleep 5
+done
 adb shell rm -rf /sdcard/Download/ufile-selftest /sdcard/Download/U-file
 adb shell mkdir -p /sdcard/Download/ufile-selftest/data
-for file in "$fixtures"/*; do adb push "$file" /sdcard/Download/ufile-selftest/data/ >/dev/null; done
+for file in "$fixtures"/*; do
+  for attempt in 1 2 3 4 5; do
+    adb push "$file" /sdcard/Download/ufile-selftest/data/ >/dev/null && break
+    [ "$attempt" = 5 ] && exit 1
+    sleep 5
+  done
+done
 adb shell touch /sdcard/Download/ufile-selftest/RUN_SELFTEST
 
 echo "== install"
