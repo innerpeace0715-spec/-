@@ -1,7 +1,7 @@
 # 3 Agents — 안드로이드에서 "API 키 없이 로그인만으로" 쓰기 설계
 
 > 대상 코드: `3-agents-main` v0.4.0 (`server.js`, `lib/cli.js`, `lib/providers.js`, `public/app.js`, `desktop/main.js`)
-> 작성일: 2026-10-29 · 상태: 설계안 (구현 전)
+> 작성일: 2026-10-29 · 개정: Gemini 제외, PC 없이 쓰는 방안(§12), ChatGPT Chat·Work 대응(§13) 추가 · 상태: 설계안 (구현 전)
 
 ---
 
@@ -10,7 +10,9 @@
 **휴대폰이 AI를 직접 부르지 않고, 이미 로그인된 내 PC의 3 Agents 서버에 "원격 화면"으로 붙는 구조(PC 브릿지)** 가 현실적으로 유일하게 약관·보안·유지보수를 모두 만족합니다.
 
 - ChatGPT(`codex`)·Claude(`claude`): PC에서 공식 CLI로 한 번 로그인 → 폰에서는 **API 키 없이** 사용 ✅
-- Gemini: 2026-06-18 개인 계정 CLI 로그인 종료로 **약관을 지키면서 "로그인만으로" 쓰는 경로가 없습니다.** → 기본은 *ChatGPT + Claude 2인 합의*, 원하면 기존의 Antigravity(agy, 회색지대) 옵션 ⚠️
+- Gemini·Antigravity: **제외** (2026-10-29 결정). 앱은 *ChatGPT + Claude 2인 합의* 로 고정합니다.
+- ChatGPT 의 **Chat / Work 모드**는 공식 CLI·API 가 없어 자동 호출할 수 없습니다. 같은 구독으로 돌아가는 `codex exec` 를 "Chat 대용"으로 쓰고, Work 가 꼭 필요하면 수동 중계 모드로 씁니다 (§13).
+- PC 를 켜 두기 싫다면 API 말고도 *개인 클라우드 VM*, *집 저전력 미니 서버*, *수동 중계 모드* 가 있습니다 (§12).
 - 폰 쪽 앱은 새로 만들지 않고 **기존 웹 UI를 PWA로 설치**합니다 (이미 `manifest.webmanifest`·아이콘·반응형 레이아웃이 있음).
 
 ---
@@ -21,7 +23,7 @@
 | --- | --- | --- |
 | R1 | 안드로이드에서 사용 | 폰 화면에서 질문·결과·기록 확인 |
 | R2 | API 키 없이 | 종량 과금 키를 발급·입력하지 않는다. 구독 로그인만 쓴다 |
-| R3 | 로그인만으로 각 AI 사용 | ChatGPT / Claude / (Gemini) 각각 |
+| R3 | 로그인만으로 각 AI 사용 | ChatGPT / Claude (Gemini 제외) |
 | 암묵 | 원작의 원칙 유지 | "CLI 를 실행만 하고 토큰·쿠키·자격 증명 파일은 읽지 않는다", 로컬 우선, 다른 사이트의 호출 차단 |
 
 ---
@@ -57,11 +59,10 @@ flowchart LR
     CLI["lib/cli.js"]
     C1["claude -p<br/>(Claude 구독)"]
     C2["codex exec<br/>(ChatGPT 구독)"]
-    C3["agy -p<br/>(선택, 회색지대)"]
   end
   PWA -- "HTTPS + x-3a-token" --> TS --> SRV
   SRV --> AUTH
-  SRV --> CLI --> C1 & C2 & C3
+  SRV --> CLI --> C1 & C2
 ```
 
 - **왜 Tailscale Serve 를 1순위로 두는가**
@@ -205,10 +206,11 @@ const authHeaders = () => {
 
 - `authOf(id)` 가 CLI 지원 제공자에 대해 항상 `'cli'` 를 돌려주도록 분기.
 - 설정 창에서 `API 키` 라디오·키 입력칸·"목록 불러오기(API)"를 숨김.
-- Gemini 처리:
-  - `comboSelect` 에서 `ChatGPT + Gemini(API) + Claude` 항목을 **"ChatGPT + Claude (2개)"** 로 대체.
-  - 내부적으로 `settings.enabled.gemini = false` 효과 → 기존 로직(`agents.length < 2` 검사, 2개 이상이면 합의 진행)이 그대로 동작.
-  - Antigravity 는 PC 에 `agy` 가 감지되고 PC 에서 이미 약관 경고를 확인한 경우에만 선택지로 노출(폰에서도 경고 대화상자 다시 표시).
+- Gemini·Antigravity 제거 (로그인 전용 모드뿐 아니라 앱 전체):
+  - `AGENTS` 에서 `gemini`·`antigravity` 를 빼고, `comboSelect`·`agyWarn` 대화상자·`slotB()` 를 삭제 → 조합은 ChatGPT + Claude 고정.
+  - 기존 로직(`agents.length < 2` 검사, 2개 이상이면 합의 진행)이 그대로 동작하므로 합의 흐름은 바뀌지 않습니다. 단, 둘 중 하나가 실패하면 합의를 못 하므로 "한 AI만 답했습니다" 상태를 보여 줍니다.
+  - 서버: `PROVIDERS` 에서 두 제공자를 빼고 `lib/cli.js` 의 `antigravity` 스펙, `lib/providers.js` 의 `gemini` 어댑터를 제거. 저장된 설정(`localStorage`)에 남은 값은 무시.
+  - 합의 답변의 익명 기호는 A(ChatGPT)·B(Claude) 두 개로 바꾸고, 합의 프롬프트의 "세 답변" 문구를 "두 답변"으로 수정.
 - 칩 툴팁 문구: "PC의 로그인 CLI 사용" / "PC에 CLI가 없습니다 — PC에서 설치·로그인 필요".
 - `기록 저장 폴더` 입력은 읽기 전용으로 표시(4.4 정책과 일치).
 
@@ -255,7 +257,7 @@ PC 가 꺼져 있으면 폰은 "PC에 연결할 수 없습니다"만 표시합�
 | 폰 분실 | PC 에서 토큰 재발급 한 번으로 모든 원격 연결 무효화 |
 | 폰에서 PC 파일 시스템 조작 | 원격은 저장 폴더 변경·전체 삭제 금지. CLI 는 기존대로 도구 끈 읽기 전용·빈 임시 폴더에서 실행 |
 | 서버 `.env` API 키가 원격으로 과금 | 원격 요청은 API 키 경로 자체를 막음 (4.4) |
-| 프롬프트 인젝션으로 CLI 가 도구 사용 | 기존 `--tools ''`, `--sandbox read-only`, agy 지시문 그대로 |
+| 프롬프트 인젝션으로 CLI 가 도구 사용 | 기존 `--tools ''`, `--sandbox read-only` 그대로 |
 
 ---
 
@@ -292,9 +294,47 @@ PC 가 꺼져 있으면 폰은 "PC에 연결할 수 없습니다"만 표시합�
 ## 11. 남는 위험과 열린 질문
 
 - **약관은 바뀝니다.** 이 설계는 "공식 CLI 를 본인 PC에서 본인이 실행"이라는 현재 데스크탑 앱과 같은 근거 위에 있지만, 각 사가 CLI 의 헤드리스(비대화형) 사용이나 원격 사용 자체를 제한하면 영향을 받습니다. 특히 Claude 는 구독의 제3자 도구 사용에 엄격하므로, 릴리스 전 Anthropic 의 Legal & Compliance 문서를 다시 확인해야 합니다.
-- **Gemini 공백.** 로그인 전용 조건에서는 2인 합의가 기본이 됩니다. 3인 합의의 가치(교차 검증)가 줄어든다는 점을 UI에 정직하게 표시해야 합니다.
+- **2인 합의의 한계.** AI가 둘이면 의견이 갈렸을 때 다수결이 안 됩니다. 합의 조정 AI 가 둘 중 하나이므로 자기 답을 편드는 경향도 생길 수 있습니다. → 충돌 항목은 '판단 보류'로 표시하고, 조정 AI 를 번갈아 쓰는 옵션을 고려합니다.
 - **PC 상시 가동 필요.** 이것이 싫다면 결국 API 키 방식(종량 과금)이 유일한 대안입니다.
 - **라이선스.** 원작 `LICENSE` 는 저작권자(cybereun)의 서면 허가 없는 수정·2차 저작물 작성을 금지합니다. 구현 단계는 저작권자 본인이거나 허가를 받은 경우에만 진행해야 합니다.
+
+## 12. PC 를 켜 두지 않아도 되는 방안
+
+"로그인 금고"가 꼭 내 PC 일 필요는 없습니다. **항상 켜져 있는, 나 혼자 쓰는 컴퓨터**면 됩니다. API 말고도 길이 있습니다.
+
+| 방안 | 어떻게 | 비용 | 약관·보안 | 수고 | 평가 |
+| --- | --- | --- | --- | --- | --- |
+| **① 개인 클라우드 VM** | 리눅스 VM 에 3 Agents + `claude` + `codex` 설치, `codex login --device-auth` / `claude` 로그인, Tailscale 로만 접근 | 월 약 5~10달러 | 공식 CLI 를 본인 기기에서 본인이 실행한다는 점은 PC 와 같음. 단 인터넷에 상시 노출된 기계라 관리 책임이 커짐 (공개 포트 금지, 자동 보안 업데이트) | 중 (리눅스 기본 지식) | **추천 1** — 집 전원·네트워크와 무관 |
+| **② 집 저전력 미니 서버** | 라즈베리 파이 5(리눅스 arm64) 또는 N100 미니PC 를 공유기에 꽂아 두고 ①과 같이 설정 | 1회 10~25만 원, 전기 월 수백 원 수준(2~10W) | ①과 같음. 집 안에 있어 계정이 데이터센터 IP 에서 쓰이지 않음 | 중 | **추천 2** — 월 요금 없음 |
+| ③ 수동 중계 모드 | 서버 없이 PWA 만 씀. 질문을 ChatGPT·Claude **공식 앱**에 보내고(복사/공유), 답을 붙여 넣으면 3 Agents 가 합의용 프롬프트를 만들어 줌 → 그것도 공식 앱에 붙여 넣음 | 0원 | 가장 깨끗함 (사람이 공식 앱을 직접 씀) | **큼** — 질문당 복사·붙여넣기 4~5번 | ChatGPT **Work** 를 쓰려면 사실상 유일 (§13) |
+| ④ 폰 단독(Termux) | §7 | 0원 | 커뮤니티 패치 의존 | 큼, 불안정 | 비추천 |
+| ⑤ API 키 | 원작 기능 그대로 | 종량 과금 | 가장 명확 | 작음 | 요구사항(R2) 위반 |
+
+- ①·②는 §3~§9 설계가 **그대로** 적용됩니다. 바뀌는 건 서버가 돌아가는 기계뿐이고, 데스크탑(Electron) 대신 `node server.js` 를 `systemd` 서비스로 띄웁니다. Claude Code·Codex 둘 다 리눅스 x64/arm64 를 공식 지원하므로 Termux 같은 우회가 필요 없습니다.
+- ①·②에서 페어링 QR 은 Electron 화면이 없으므로 서버 시작 시 터미널에 출력합니다(`node server.js --pair` → 텍스트 QR + URL).
+- 주의: 구독 로그인 CLI 를 "서버에서" 돌리는 것에 대해 각 사가 명시적으로 금지하지는 않았지만, 구독은 **사람이 직접 쓰는 개인 사용**을 전제로 합니다. 이 앱은 사람이 질문할 때만 호출하므로 그 범위 안이라고 보지만, 다른 사람과 공유하거나 예약 작업으로 자동 대량 호출하면 그 범위를 벗어납니다.
+
+## 13. ChatGPT Chat·Work 모드 대응
+
+2026-07 에 ChatGPT 는 **Chat / Work / Codex** 세 모드 구조가 됐습니다. 하지만 이 앱이 쓸 수 있는 "구독 로그인 + 프로그램 호출" 경로는 여전히 **Codex CLI 하나뿐**입니다.
+
+| | Chat | Work | Codex CLI (`codex exec`) |
+| --- | --- | --- | --- |
+| 무엇 | 대화·질문 | 긴 조사, 결과물(문서 등) 생성 에이전트 | 개발용 에이전트, 비대화형 실행 지원 |
+| 쓸 수 있는 곳 | 웹·모바일·데스크탑 앱 | 웹·모바일·데스크탑 앱 | 터미널 |
+| 다른 프로그램이 호출 | ❌ 공식 방법 없음 | ❌ 공식 방법 없음 | ✅ (지금 앱이 쓰는 방식) |
+| 같은 ChatGPT 구독 사용 | ✅ | ✅ | ✅ (별도 구매 불필요) |
+
+그래서 "Codex 대신 Chat/Work 로 바꾸기"는 **화면 자동 조작(스크래핑) 없이는 불가능**하고, 그건 §2 의 D 방식이라 기각입니다. 대신:
+
+1. **Chat 대체 — `codex exec` 를 '대화 모드'로 고정** (권장, 코드 변경 소)
+   - 이미 지금 앱이 도구 끔·읽기 전용·빈 폴더로 실행하고 있어 사실상 "Chat 처럼" 답합니다. 모델은 `codex debug models` 목록에서 Chat 과 같은 계열 모델을 고르면 됩니다.
+   - 카드 이름·설명을 "ChatGPT (Codex 엔진으로 실행)"로 정직하게 표기해 사용자가 혼동하지 않게 합니다.
+   - 시스템 프롬프트에 "코드 작업이 아니라 일반 질문에 답하는 중" 지시를 추가해 개발자 말투를 줄입니다.
+2. **Work 가 필요한 질문 — 수동 중계 (§12 ③)**
+   - 카드에 "Work 로 보내기" 버튼: 질문을 복사하고 ChatGPT 앱을 엽니다(안드로이드 공유 인텐트 / 웹 Share API). 사용자가 Work 결과를 붙여 넣으면 그 답이 A 답변으로 합의에 들어갑니다.
+   - 조사형 질문은 Work 가 더 낫지만 수 분이 걸리므로, 기본은 1번(자동)과 같이 쓰고 필요할 때만 2번을 쓰는 혼합형을 제안합니다.
+3. (확인 필요) 웹 검색: Codex CLI 는 2026-01 부터 웹 검색이 기본으로 켜져 있다는 공식 변경 기록이 있습니다. 최신 정보가 필요한 질문에서 Work 의 '조사' 일부를 대신할 수 있는지는 실제 `codex exec --help` 로 확인한 뒤 옵션으로 넣습니다.
 
 ### 참고
 
@@ -302,3 +342,5 @@ PC 가 꺼져 있으면 폰은 "PC에 연결할 수 없습니다"만 표시합�
 - Claude Code Android 바이너리 부재: [claudeissues #72620](https://claudeissues.com/issue/72620-feature-publish-linux-arm64-android-native-binary-for-termux)
 - Codex Termux 로그인 문제: [openai/codex #6632](https://github.com/openai/codex/issues/6632)
 - Gemini CLI 개인 로그인 종료: [Google 공지](https://developers.google.com/gemini-code-assist/docs/deprecations/code-assist-individuals)
+- ChatGPT Chat/Work/Codex 구조: [OpenAI 도움말](https://help.openai.com/en/articles/20001275), [iGeeksBlog — ChatGPT Work 출시](https://www.igeeksblog.com/openai-chatgpt-work-gpt-5-6/)
+- Codex 비대화형 실행·헤드리스 로그인: [Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode), [openai/codex #3820](https://github.com/openai/codex/issues/3820)
