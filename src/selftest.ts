@@ -135,9 +135,13 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
   await step('send a duplicate to the U-file trash', async () => {
     const outcome = await invoke<{ recycled: string[]; skipped: { reason: string }[] }>('recycle_files', { paths: [copy] });
     expect(outcome.recycled.length === 1, JSON.stringify(outcome.skipped));
-    const trash = await listing(TRASH);
-    expect(trash.folders.length > 0, 'trash folder is empty');
-    return `trash: ${trash.folders.join(', ')}`;
+    // The trash is a protected folder, so U-file's own listing hides what is in it;
+    // check that the copy left the test folder and nothing else did.
+    const after = await listing(DATA);
+    const name = copy.slice(copy.lastIndexOf('/') + 1);
+    expect(!after.files.some((file) => file.name === name), `${name} is still in the test folder`);
+    expect(after.files.length === (before?.files.length ?? 0) - 1, `${after.files.length} files left`);
+    return `${name} moved to ${TRASH}`;
   });
 
   await step('open the video in FilmCraft', async () => {
@@ -156,10 +160,11 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
     expect(event.phase === 'ready', event.phase === 'error' ? event.message : event.phase);
     const frame = document.querySelector<HTMLIFrameElement>('.editor-frame');
     const info = (frame?.contentWindow as { filmcraft?: { info(): unknown } } | null)?.filmcraft?.info();
-    return `editor ready: ${JSON.stringify(info)}`;
+    return `editor ready (${event.phase === 'ready' ? event.mode : ''}): ${JSON.stringify(info)}`;
   });
 
-  await step('export from FilmCraft and save to the tablet', async () => {
+  const editorOpened = steps[steps.length - 1]?.ok === true;
+  if (editorOpened) await step('export from FilmCraft and save to the tablet', async () => {
     const frame = document.querySelector<HTMLIFrameElement>('.editor-frame');
     const filmcraft = (frame?.contentWindow as { filmcraft?: { execute(command: string, params: unknown): Promise<unknown> } } | null)?.filmcraft;
     expect(filmcraft !== undefined, 'editor not open');
@@ -173,6 +178,7 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
     expect(file !== undefined && file.sizeBytes > 1000, `saved file missing or empty: ${path}`);
     return `${path} (${file!.sizeBytes} bytes)`;
   });
+  else steps.push({ name: 'export from FilmCraft and save to the tablet', ok: false, detail: 'skipped: the editor did not open' });
 
   log('writing the report');
   const report = { ok: steps.every((entry) => entry.ok), userAgent: navigator.userAgent, steps, finishedAt: new Date().toISOString() };
