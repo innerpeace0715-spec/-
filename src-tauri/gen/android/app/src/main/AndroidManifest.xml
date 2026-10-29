@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- No INTERNET permission: U-file never sends anything off the tablet.
+         Pages, IPC and media are served to the WebView from inside the app. -->
     <!-- FileMoa reads and moves files by path in shared storage
          (Download, DCIM, Documents...). Android 11+ grants that through
          "All files access"; older versions use the storage permissions. -->

@@ -13,7 +13,6 @@ use std::{
     collections::{BTreeMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::Once,
     time::Duration,
 };
 use tauri::{AppHandle, Manager};
@@ -23,22 +22,23 @@ use tauri::{AppHandle, Manager};
 const GEMINI_MODELS_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const OLLAMA_ENDPOINT: &str = "http://127.0.0.1:11434";
 const CONFIG_FILE: &str = "ai-providers.json";
-static TLS_PROVIDER: Once = Once::new();
+#[cfg(not(target_os = "android"))]
+static TLS_PROVIDER: std::sync::Once = std::sync::Once::new();
 
+/// The tablet build has no network access at all (no INTERNET permission),
+/// so nothing about the user's files can leave the device.
+#[cfg(target_os = "android")]
+fn http_client(_: Duration) -> Result<Client, String> {
+    Err("U-file 태블릿판은 파일 정보를 외부로 보내지 않습니다 / the tablet build sends nothing off the device".into())
+}
+
+#[cfg(not(target_os = "android"))]
 fn http_client(timeout: Duration) -> Result<Client, String> {
     TLS_PROVIDER.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
     });
-    let builder = Client::builder().timeout(timeout);
-    // The platform verifier needs Android-side setup Tauri does not do;
-    // verify against the bundled Mozilla root store instead.
-    #[cfg(target_os = "android")]
-    let builder = builder.tls_certs_only(
-        webpki_root_certs::TLS_SERVER_ROOT_CERTS
-            .iter()
-            .filter_map(|der| reqwest::Certificate::from_der(der).ok()),
-    );
-    builder
+    Client::builder()
+        .timeout(timeout)
         .build()
         .map_err(|e| format!("네트워크 클라이언트를 만들 수 없습니다: {e}"))
 }

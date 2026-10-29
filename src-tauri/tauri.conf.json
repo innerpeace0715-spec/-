@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost blob: data:; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost blob: data:; worker-src 'self' blob:; frame-src 'self'; object-src 'none'",
       "assetProtocol": {
         "enable": true,
         "scope": {
@@ -32,7 +32,8 @@
           ],
           "requireLiteralLeadingDot": true
         }
-      }
+      },
+      "dangerousDisableAssetCspModification": true
     }
   },
   "bundle": {

@@ -134,3 +134,50 @@ jobs:
           name: U-file-GalaxyTab
           path: out/*.apk
           if-no-files-found: error
+
+  # Install the exact APK from the job above on an Android tablet emulator
+  # (x86_64 with ARM translation) and run the app's end-to-end self-test.
+  # Only an APK that passes is published as "U-file-GalaxyTab-verified".
+  verify:
+    needs: apk
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: U-file-GalaxyTab
+          path: apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install ffmpeg (test video)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Self-test on a tablet emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_tablet
+          ram-size: 4096M
+          disk-size: 6G
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          disable-animations: true
+          script: scripts/emulator-selftest.sh "$(ls apk/*.apk | head -n1)" selftest
+      - name: Keep the test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-selftest-evidence
+          path: selftest
+      - name: Publish the verified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-GalaxyTab-verified
+          path: |
+            apk/*.apk
+            selftest/selftest.json
+          if-no-files-found: error

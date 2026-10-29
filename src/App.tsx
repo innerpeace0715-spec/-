@@ -50,6 +50,7 @@ import {
 import appIcon from './assets/app-icon.png';
 import { IS_ANDROID, androidBridge, confirmBox } from './platform';
 import VideoEditor from './VideoEditor';
+import { runSelfTest, selfTestRequested } from './selftest';
 import './styles.css';
 import { basename, chooseKeeper, cloudOnlyNotice as cloudOnlyMessage, decideOpenFolder, dirname, duplicateGroupTitle, formatBytes, formatDay, selectForRecycle, type KeepCriterion, isCancelledError, planSummary, progressPercent, providerStatus, requestCount, runTitle as runTitleText, shouldOpenUpdateModal, shouldUseStartupPath, type OpenFolderRequest, friendlyPath, separatorOf, underRoot, isVideo, VIDEO_EXTENSIONS } from './utils';
 
@@ -871,9 +872,14 @@ export default function App() {
   }
 
   useEffect(() => {
-    void refreshAiProviders();
+    // The tablet build has no AI providers: it never sends anything off the device.
+    if (!IS_ANDROID) void refreshAiProviders();
     void invoke<KnownFolder[]>('known_folders').then(setKnownFolders).catch(() => undefined);
-    if (IS_ANDROID) checkStorageAccess();
+    if (IS_ANDROID) {
+      checkStorageAccess();
+      // CI's emulator check of the installed APK (src/selftest.ts).
+      if (!startupRan.current) void selfTestRequested().then((requested) => { if (requested) void runSelfTest(setEditing); });
+    }
     void invoke<string | null>('startup_path')
       .then((initialPath) => {
         if (shouldUseStartupPath(initialPath)) {
@@ -1029,7 +1035,7 @@ export default function App() {
         { key: 'folder', icon: FolderOpen, action: choose },
         { key: 'preview', icon: Search, action: makePlan, disabled: !path },
         { key: 'execute', icon: Play, action: execute, disabled: !plan || !plan.planId || !selectedCount },
-        { key: 'aiClassify', icon: Bot, action: runAiClassification, disabled: !plan || !plan.planId || !pendingCount },
+        ...(IS_ANDROID ? [] : [{ key: 'aiClassify', icon: Bot, action: runAiClassification, disabled: !plan || !plan.planId || !pendingCount }]),
         { key: 'editFile', icon: Clapperboard, action: chooseVideo },
       ]
     : tab === 'manage'
@@ -1038,7 +1044,7 @@ export default function App() {
           { key: 'duplicates', icon: Copy, action: scanDuplicates, disabled: !path },
           { key: 'large', icon: Search, action: scanLargeFiles, disabled: !path },
           { key: 'emptyFolders', icon: FolderTree, action: scanEmptyFolders, disabled: !path },
-          { key: 'aiSettings', icon: Bot, action: () => setPanel('ai') },
+          ...(IS_ANDROID ? [] : [{ key: 'aiSettings', icon: Bot, action: () => setPanel('ai') }]),
         ]
       : [
           { key: 'undo', icon: Undo2, action: () => void openUndoPreview(), disabled: !runs.some((run) => run.executedCount > 0) },

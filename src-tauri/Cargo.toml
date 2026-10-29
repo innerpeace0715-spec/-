@@ -33,10 +33,6 @@ rustls = { version = "0.23.44", default-features = false, features = ["ring", "s
 tauri-plugin-updater = "2.11.0"
 tauri-plugin-single-instance = "2"
 
-# Android has no platform verifier set up for Rust, so TLS uses bundled roots.
-[target.'cfg(target_os = "android")'.dependencies]
-webpki-root-certs = "1"
-
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_UI_Shell"] }
 

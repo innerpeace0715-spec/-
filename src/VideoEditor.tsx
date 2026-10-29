@@ -19,12 +19,19 @@ type FilmCraftWindow = Window & typeof globalThis & {
 /** FilmCraft starts with an empty project and without reopening an old one. */
 const EDITOR_URL = 'filmcraft/index.html?empty&norecover&fresh';
 
+/** What happened in the editor, as a `ufile-editor` window event (read by the self-test). */
+export type EditorEvent = { phase: 'ready' } | { phase: 'error'; message: string } | { phase: 'saved'; path: string } | { phase: 'save-error'; message: string };
+
+function report(detail: EditorEvent) {
+  window.dispatchEvent(new CustomEvent<EditorEvent>('ufile-editor', { detail }));
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function whenReady(frame: HTMLIFrameElement, cancelled: () => boolean): Promise<FilmCraftWindow> {
+async function whenReady(frame: () => HTMLIFrameElement | null, cancelled: () => boolean): Promise<FilmCraftWindow> {
   // Compiling the editor's WebAssembly takes a while on a tablet.
   for (let waited = 0; waited < 180_000 && !cancelled(); waited += 200) {
-    const win = frame.contentWindow as FilmCraftWindow | null;
+    const win = frame()?.contentWindow as FilmCraftWindow | null;
     const load = win?.filmcraftLoad;
     if (load?.error || load?.fatal) throw new Error(load.error ?? load.fatal);
     if (win?.filmcraft && load?.readyMs) return win;
@@ -66,11 +73,11 @@ export default function VideoEditor({ path, lang, onClose }: { path: string; lan
   const [status, setStatus] = useState(lang === 'ko' ? '편집기를 여는 중…' : 'Starting the editor…');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState<string[]>([]);
+  // Set once the editor is known to be bundled, so a build without it never frames another page.
+  const [source, setSource] = useState<string | null>(null);
   const name = basename(path);
 
   useEffect(() => {
-    const element = frame.current;
-    if (!element) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -78,9 +85,18 @@ export default function VideoEditor({ path, lang, onClose }: { path: string; lan
         // (Look at the page itself: a missing file may be answered with U-file's own index.html.)
         const bundled = await fetch(EDITOR_URL.split('?')[0]).then(async (response) => response.ok && (await response.text()).includes('filmcraft_canvas'), () => false);
         if (!bundled) throw new Error(lang === 'ko' ? '이 빌드에는 FilmCraft 편집기가 포함되지 않았습니다.' : 'This build does not include the FilmCraft editor.');
-        const win = await whenReady(element, () => cancelled);
+        setSource(EDITOR_URL);
+        const win = await whenReady(() => frame.current, () => cancelled);
         if (cancelled) return;
-        if (IS_ANDROID) captureDownloads(win, (file) => setSaved((list) => [...list, file]), setError);
+        if (IS_ANDROID) {
+          captureDownloads(win, (file) => {
+            setSaved((list) => [...list, file]);
+            report({ phase: 'saved', path: file });
+          }, (message) => {
+            setError(message);
+            report({ phase: 'save-error', message });
+          });
+        }
         setStatus(lang === 'ko' ? '영상을 불러오는 중…' : 'Loading the video…');
         const filmcraft = win.filmcraft as FilmCraft;
         let result: ImportResult;
@@ -98,10 +114,12 @@ export default function VideoEditor({ path, lang, onClose }: { path: string; lan
           await filmcraft.execute('file.newSequence', { name: name.replace(/\.[^.]+$/, ''), fromItem: item }).catch(() => undefined);
         }
         if (!cancelled) setStatus('');
+        report({ phase: 'ready' });
       } catch (failure) {
         if (cancelled) return;
         setStatus('');
         const message = failure instanceof Error ? failure.message : String(failure);
+        report({ phase: 'error', message });
         setError(message === 'timeout'
           ? (lang === 'ko' ? '편집기가 시작되지 않았습니다. 앱을 다시 열어 보세요.' : 'The editor did not start. Try reopening the app.')
           : message);
@@ -131,7 +149,7 @@ export default function VideoEditor({ path, lang, onClose }: { path: string; lan
       </header>
       {error && <p className="notice editor-message">{lang === 'ko' ? '편집기 오류: ' : 'Editor error: '}{error}</p>}
       {saved.length > 0 && <p className="inline-message editor-message"><CheckCircle2 size={16} /> {lang === 'ko' ? '기기에 저장했습니다: ' : 'Saved to the device: '}{saved.map((file) => friendlyPath(file, lang)).join(', ')}</p>}
-      <iframe ref={frame} className="editor-frame" src={EDITOR_URL} title="FilmCraft" allow="fullscreen; autoplay" />
+      {source ? <iframe ref={frame} className="editor-frame" src={source} title="FilmCraft" allow="fullscreen; autoplay" /> : <div className="editor-frame" />}
     </div>
   );
 }
