@@ -90,6 +90,10 @@ iPad에서 정리할 파일은 **파일 앱 → 나의 iPad → U-file** 폴더�
 - FilmCraft 원본 코드는 `vendor/filmcraft`에 있습니다(storytold/filmcraft
   `8d925e9`, MIT/Apache-2.0). 그중 WebAssembly 웹 빌드를 앱 안에 넣어 **탭에서 직접** 실행합니다.
   인터넷 연결이나 서버가 필요 없습니다.
+- `vendor/filmcraft`에서 U-file이 고친 곳은 한 군데입니다. `apps/filmcraft-web/src/lib.rs`에서 그래픽
+  장치에 요청하는 최대 텍스처 크기를, 장치가 허용하는 값 이하로 낮췄습니다. 원래는 8192를 고정으로 요청해서,
+  4096까지만 되는 기기에서는 편집기가 시작되지 않았습니다.
+- 편집기가 시작에 실패하거나 도중에 멈추면 U-file이 WebGL2, CPU 순서로 더 가벼운 방식으로 다시 엽니다.
 - 편집기에서 내보내기(Export)나 저장을 하면 결과 파일이 자동으로 기기에 저장됩니다.
   영상은 `내장 저장소/Movies/U-file/`, 그 밖의 파일(프로젝트 등)은 `내장 저장소/Download/U-file/`에
   저장되고, 같은 이름이 있으면 `(1)`을 붙입니다. 원본 영상은 건드리지 않습니다.

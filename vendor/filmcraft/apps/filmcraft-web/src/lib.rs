@@ -155,6 +155,17 @@ pub async fn start(canvas_id: String) -> Result<(), JsValue> {
     {
         c.instance_descriptor.backends = eframe::wgpu::Backends::GL;
     }
+    // U-file: egui asks every device for 8192×8192 textures, so a GPU or emulator that allows
+    // less (4096 on SwiftShader) failed to start. Ask for no more than the adapter allows.
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(c) = &mut web_options.wgpu_options.wgpu_setup {
+        let requested = std::sync::Arc::clone(&c.device_descriptor);
+        c.device_descriptor = std::sync::Arc::new(move |adapter| {
+            let mut descriptor = requested(adapter);
+            let allowed = adapter.limits().max_texture_dimension_2d;
+            descriptor.required_limits.max_texture_dimension_2d = descriptor.required_limits.max_texture_dimension_2d.min(allowed);
+            descriptor
+        });
+    }
     let runner = eframe::WebRunner::new();
     runner
         .start(

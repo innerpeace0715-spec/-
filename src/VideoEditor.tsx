@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { ArrowLeft, CheckCircle2, Clapperboard, RefreshCw } from 'lucide-react';
 import { IS_MOBILE, confirmBox } from './platform';
+import { saveBytes } from './save';
 import { basename, friendlyPath } from './utils';
 
 /** What FilmCraft's web build puts on its window (docs/web.md in vendor/filmcraft). */
@@ -63,8 +64,8 @@ async function whenReady(frame: () => HTMLIFrameElement | null, source: string, 
     // Until React renders the new frame, the old (possibly crashed) one is still mounted.
     const win = element?.getAttribute('src') === source ? element.contentWindow as FilmCraftWindow | null : null;
     const load = win?.filmcraftLoad;
-    if (load?.fatal) throw new EditorCrashed(load.fatal);
-    if (load?.error) throw new Error(load.error);
+    // A failed start (e.g. a GPU limit the WebView cannot meet) gets the next mode too.
+    if (load?.fatal ?? load?.error) throw new EditorCrashed(load.fatal ?? load.error);
     if (win?.filmcraft && load?.readyMs) return win;
     await sleep(200);
   }
@@ -91,7 +92,7 @@ function captureDownloads(win: FilmCraftWindow, onSaved: (path: string) => void,
     void (async () => {
       try {
         const bytes = new Uint8Array(await (await fetch(this.href)).arrayBuffer());
-        onSaved(await invoke<string>('save_download', bytes, { headers: { 'x-name': encodeURIComponent(name) } }));
+        onSaved(await saveBytes(name, bytes));
       } catch (error) {
         onError(String(error));
       }

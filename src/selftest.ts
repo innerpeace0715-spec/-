@@ -1,5 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { IS_IOS } from './platform';
+import { saveBytes } from './save';
 import type { EditorEvent } from './VideoEditor';
 
 /**
@@ -183,5 +184,5 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
   log('writing the report');
   const report = { ok: steps.every((entry) => entry.ok), userAgent: navigator.userAgent, steps, finishedAt: new Date().toISOString() };
   const bytes = new TextEncoder().encode(JSON.stringify(report, null, 2));
-  await invoke('save_download', bytes, { headers: { 'x-name': encodeURIComponent('U-file-selftest.json') } });
+  await saveBytes('U-file-selftest.json', bytes);
 }

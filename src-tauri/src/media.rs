@@ -3,8 +3,8 @@
 //!
 //! FilmCraft reads a video through the asset protocol, or through
 //! `read_media` when that fails. What it saves (an export, a project) would
-//! be a browser download, which the Android WebView drops, so the page hands
-//! those bytes to `save_download` instead.
+//! be a browser download, which tablet WebViews drop, so the page hands those
+//! bytes over with `save_begin` / `save_chunk` / `save_finish` instead.
 
 use std::fs;
 use std::io::Write;
@@ -51,31 +51,120 @@ pub async fn read_media(path: String) -> Result<tauri::ipc::Response, String> {
     .map_err(|e| format!("작업 스레드 오류 / worker thread failed: {e}"))?
 }
 
-/// Save a file FilmCraft wrote. The body is the raw bytes; the `x-name`
-/// header carries the URI-encoded file name. Videos go to `Movies/U-file`,
-/// everything else to `Download/U-file`, never replacing a file. Returns the
-/// path written.
+/// Files being saved piece by piece, by token. Android's WebView cannot hand
+/// binary request bodies to Rust (they arrive as JSON), so the page sends a
+/// saved file as base64 chunks: `save_begin`, `save_chunk`…, `save_finish`.
+#[derive(Default)]
+pub struct Saves(std::sync::Mutex<std::collections::HashMap<String, Partial>>);
+
+pub struct Partial {
+    file: fs::File,
+    temp: PathBuf,
+    target: PathBuf,
+}
+
+impl Saves {
+    fn lock(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, Partial>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Start `name` in `folder`; the bytes go to a hidden part file until the end.
+    pub fn begin(&self, folder: &Path, name: &str) -> Result<String, String> {
+        let name = file_name_only(name);
+        let name = if name.is_empty() {
+            "U-file export".to_string()
+        } else {
+            name
+        };
+        fs::create_dir_all(folder)
+            .map_err(|e| format!("저장 폴더를 만들 수 없습니다 / cannot create the folder: {e}"))?;
+        let token = uuid::Uuid::new_v4().to_string();
+        let temp = folder.join(format!(".ufile-part-{token}"));
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(|e| format!("저장하지 못했습니다 / could not save: {e}"))?;
+        let target = folder.join(name);
+        self.lock()
+            .insert(token.clone(), Partial { file, temp, target });
+        Ok(token)
+    }
+
+    pub fn chunk(&self, token: &str, bytes: &[u8]) -> Result<(), String> {
+        let mut saves = self.lock();
+        let partial = saves
+            .get_mut(token)
+            .ok_or("저장이 시작되지 않았습니다 / no such save")?;
+        partial
+            .file
+            .write_all(bytes)
+            .map_err(|e| format!("저장하지 못했습니다 / could not save: {e}"))
+    }
+
+    /// Give the file its name, never replacing one: `name (1).ext` when taken.
+    pub fn finish(&self, token: &str) -> Result<PathBuf, String> {
+        let partial = self
+            .lock()
+            .remove(token)
+            .ok_or("저장이 시작되지 않았습니다 / no such save")?;
+        let Partial { file, temp, target } = partial;
+        file.sync_all()
+            .map_err(|e| format!("저장하지 못했습니다 / could not save: {e}"))?;
+        drop(file);
+        crate::planner::move_with_unique_name(&temp, target)
+            .map(|(path, _)| path)
+            .map_err(|e| {
+                let _ = fs::remove_file(&temp);
+                format!("저장하지 못했습니다 / could not save: {e}")
+            })
+    }
+
+    pub fn abort(&self, token: &str) {
+        if let Some(partial) = self.lock().remove(token) {
+            drop(partial.file);
+            let _ = fs::remove_file(&partial.temp);
+        }
+    }
+}
+
+/// Start saving a file FilmCraft wrote. Videos go to `Movies/U-file`,
+/// everything else to `Download/U-file` (Documents/U-file on the iPad).
 #[tauri::command]
-pub async fn save_download(
+pub fn save_begin(
     app: AppHandle,
-    request: tauri::ipc::Request<'_>,
+    saves: tauri::State<'_, Saves>,
+    name: String,
 ) -> Result<String, String> {
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err("저장할 내용이 없습니다 / nothing to save".into());
-    };
-    let name = request
-        .headers()
-        .get("x-name")
-        .and_then(|value| value.to_str().ok())
-        .map(percent_decode)
-        .map(|name| file_name_only(&name))
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "U-file export".into());
     let folder = save_folder(&app, Path::new(&name))?;
-    let bytes = bytes.clone();
-    tauri::async_runtime::spawn_blocking(move || write_new(&folder, &name, &bytes))
-        .await
-        .map_err(|e| format!("작업 스레드 오류 / worker thread failed: {e}"))?
+    saves.begin(&folder, &name)
+}
+
+/// One base64 piece of the file.
+#[tauri::command]
+pub fn save_chunk(
+    saves: tauri::State<'_, Saves>,
+    token: String,
+    data: String,
+) -> Result<(), String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| format!("잘못된 데이터 / bad data: {e}"))?;
+    saves.chunk(&token, &bytes)
+}
+
+/// Finish the save; returns the path written.
+#[tauri::command]
+pub fn save_finish(saves: tauri::State<'_, Saves>, token: String) -> Result<String, String> {
+    saves.finish(&token).map(|path| path.display().to_string())
+}
+
+#[tauri::command]
+pub fn save_abort(saves: tauri::State<'_, Saves>, token: String) {
+    saves.abort(&token);
 }
 
 #[cfg(target_os = "android")]
@@ -101,31 +190,6 @@ fn save_folder(app: &AppHandle, _name: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("다운로드 폴더를 찾을 수 없습니다 / no downloads folder: {e}"))
 }
 
-fn write_new(folder: &Path, name: &str, bytes: &[u8]) -> Result<String, String> {
-    fs::create_dir_all(folder)
-        .map_err(|e| format!("저장 폴더를 만들 수 없습니다 / cannot create the folder: {e}"))?;
-    let mut target = folder.join(name);
-    for _ in 0..100 {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&target)
-        {
-            Ok(mut file) => {
-                file.write_all(bytes)
-                    .and_then(|()| file.sync_all())
-                    .map_err(|e| format!("저장하지 못했습니다 / could not save: {e}"))?;
-                return Ok(target.display().to_string());
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                target = crate::planner::safe_destination(target).0;
-            }
-            Err(error) => return Err(format!("저장하지 못했습니다 / could not save: {error}")),
-        }
-    }
-    Err("저장할 이름을 찾지 못했습니다 / no free file name".into())
-}
-
 /// The last path component, so a name like `../../x` cannot leave the folder.
 fn file_name_only(name: &str) -> String {
     name.rsplit(['/', '\\'])
@@ -134,31 +198,6 @@ fn file_name_only(name: &str) -> String {
         .trim()
         .trim_start_matches('.')
         .to_string()
-}
-
-/// Undo `encodeURIComponent` (headers are ASCII; file names are Korean).
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut at = 0;
-    while at < bytes.len() {
-        let hex = |offset: usize| {
-            bytes
-                .get(at + offset)
-                .and_then(|byte| (*byte as char).to_digit(16))
-        };
-        match (bytes[at], hex(1), hex(2)) {
-            (b'%', Some(high), Some(low)) => {
-                out.push((high * 16 + low) as u8);
-                at += 3;
-            }
-            (byte, _, _) => {
-                out.push(byte);
-                at += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]
@@ -176,25 +215,42 @@ mod tests {
     }
 
     #[test]
-    fn saved_names_are_decoded_and_kept_inside_the_folder() {
-        assert_eq!(percent_decode("%EC%98%81%EC%83%81.mp4"), "영상.mp4");
-        assert_eq!(percent_decode("a%2"), "a%2");
+    fn saved_names_stay_inside_the_folder() {
         assert_eq!(file_name_only("../../etc/passwd"), "passwd");
         assert_eq!(file_name_only("..\\x.mp4"), "x.mp4");
         assert_eq!(file_name_only(".hidden"), "hidden");
     }
 
     #[test]
-    fn saving_never_replaces_a_file() {
+    fn saving_in_pieces_never_replaces_a_file() {
         let base = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test-tmp");
         fs::create_dir_all(&base).expect("base");
         let dir = tempfile::Builder::new().tempdir_in(base).expect("dir");
-        let first = write_new(dir.path(), "cut.mp4", b"one").expect("first");
-        let second = write_new(dir.path(), "cut.mp4", b"two").expect("second");
-        assert_ne!(first, second);
+        let saves = Saves::default();
+        let save = |parts: &[&[u8]]| {
+            let token = saves.begin(dir.path(), "cut.mp4").expect("begin");
+            for part in parts {
+                saves.chunk(&token, part).expect("chunk");
+            }
+            saves.finish(&token).expect("finish")
+        };
+        let first = save(&[b"o", b"ne"]);
+        let second = save(&[b"two"]);
+        assert_eq!(first, dir.path().join("cut.mp4"));
+        assert_eq!(second, dir.path().join("cut (1).mp4"));
         assert_eq!(fs::read(&first).unwrap(), b"one");
         assert_eq!(fs::read(&second).unwrap(), b"two");
+
+        let token = saves.begin(dir.path(), "dropped.mp4").expect("begin");
+        saves.abort(&token);
+        assert!(saves.finish(&token).is_err());
+        let left: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left.len(), 2, "{left:?}");
     }
 }

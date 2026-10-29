@@ -643,6 +643,7 @@ pub fn run() {
         .manage(PlanStore::default())
         .manage(ScanStore::default())
         .manage(Operations::default())
+        .manage(media::Saves::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_process::init())
@@ -652,7 +653,10 @@ pub fn run() {
             storage_info,
             selftest_log,
             media::read_media,
-            media::save_download,
+            media::save_begin,
+            media::save_chunk,
+            media::save_finish,
+            media::save_abort,
             cancel_operation,
             startup_path,
             plan_organization,
