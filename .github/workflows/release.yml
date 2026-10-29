@@ -1,0 +1,118 @@
+name: Release FileMoa
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Publish again even if a release for this version already exists (replaces its assets)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+# Two runs must not race to create or update the same release.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Rust 1.98.x produces a Tauri NSIS-patched Windows executable that
+      # exits with STATUS_STACK_OVERFLOW on startup. Keep the release toolchain
+      # pinned until the Tauri patcher supports that toolchain reliably.
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - run: npm ci
+      - name: Verify synchronized app version
+        shell: pwsh
+        run: |
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoVersion = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches.Groups[1].Value
+          $versions = @($packageVersion, $tauriVersion, $cargoVersion) | Select-Object -Unique
+          if ($versions.Count -ne 1) {
+            throw "Version mismatch: package.json=$packageVersion, tauri.conf.json=$tauriVersion, Cargo.toml=$cargoVersion"
+          }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$packageVersion") {
+            throw "Tag $env:GITHUB_REF_NAME does not match the app version v$packageVersion"
+          }
+          Write-Host "Building FileMoa v$packageVersion"
+      - name: Run frontend tests
+        run: npm test -- --run
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+      # A push to main always runs the checks above, but it only publishes when
+      # this version has no release yet. Pushing again with the same version
+      # must not overwrite installers and latest.json that users already have;
+      # bump the version (package.json, tauri.conf.json, Cargo.toml) to ship.
+      - name: Decide whether to publish
+        id: decide
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          gh release view "v$version" *> $null
+          $exists = ($LASTEXITCODE -eq 0)
+          $publish = (-not $exists) -or ($env:FORCE -eq 'true')
+          # A version such as 0.2.0-beta.1 is a pre-release: GitHub's "latest"
+          # release (which the updater follows) ignores it, so only people who
+          # install it by hand get it.
+          $prerelease = $version.Contains('-')
+          "publish=$($publish.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          "prerelease=$($prerelease.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if ($publish) { Write-Host "Publishing v$version (prerelease=$prerelease)" }
+          else { Write-Host "Release v$version already exists; checks passed, nothing published. Bump the version to ship." }
+          # `gh release view` exits 1 when the release does not exist yet, which is the
+          # normal case here; do not let that become this step's result.
+          exit 0
+      - uses: tauri-apps/tauri-action@v0
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # The action substitutes __VERSION__ from tauri.conf.json. This
+          # keeps branch pushes idempotent and creates a new release whenever
+          # the app version is deliberately bumped in the three manifests.
+          tagName: v__VERSION__
+          releaseName: "FileMoa v__VERSION__"
+          releaseBody: "FileMoa automatic update release."
+          releaseDraft: false
+          prerelease: ${{ steps.decide.outputs.prerelease == 'true' }}
+      - name: Build portable executable
+        if: steps.decide.outputs.publish == 'true'
+        run: npm run tauri build -- --no-bundle
+      - name: Prepare portable release asset
+        if: steps.decide.outputs.publish == 'true'
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $source = "src-tauri/target/release/filemoa.exe"
+          $target = "src-tauri/target/release/FileMoa_${version}_portable.exe"
+          if (-not (Test-Path -LiteralPath $source)) {
+            throw "Portable executable was not produced: $source"
+          }
+          Copy-Item -LiteralPath $source -Destination $target -Force
+          Write-Host "Prepared $target"
+      - name: Upload portable executable
+        if: steps.decide.outputs.publish == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $asset = "src-tauri/target/release/FileMoa_${version}_portable.exe"
+          gh release upload "v$version" $asset --clobber
