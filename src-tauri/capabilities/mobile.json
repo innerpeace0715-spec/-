@@ -1,8 +1,17 @@
 {
   "$schema": "../gen/schemas/mobile-schema.json",
   "identifier": "mobile",
-  "description": "FileMoa permissions on the Galaxy Tab (no self-update: the APK is installed by hand)",
-  "platforms": ["android"],
-  "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "store:default"]
+  "description": "U-file permissions on the Galaxy Tab and the iPad (no self-update: installed by hand)",
+  "platforms": [
+    "android",
+    "iOS"
+  ],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "store:default"
+  ]
 }

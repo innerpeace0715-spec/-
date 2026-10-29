@@ -211,7 +211,7 @@ pub fn recycle_files(
 /// The storage volume `path` lives on: internal storage
 /// (`/storage/emulated/0`, `/sdcard`) or an SD card (`/storage/1234-ABCD`).
 /// Elsewhere there is no place for a trash folder.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "ios")))]
 fn volume_root(path: &Path) -> Option<std::path::PathBuf> {
     path.ancestors()
         .find(|ancestor| {
@@ -222,6 +222,12 @@ fn volume_root(path: &Path) -> Option<std::path::PathBuf> {
                 )
         })
         .map(Path::to_path_buf)
+}
+
+/// On the iPad everything U-file can reach is inside its Documents folder.
+#[cfg(target_os = "ios")]
+fn volume_root(path: &Path) -> Option<std::path::PathBuf> {
+    crate::planner::ios_documents().filter(|documents| path.starts_with(documents))
 }
 
 /// Move each item into the folder `bin_for` names for it, never replacing a

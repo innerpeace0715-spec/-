@@ -24,7 +24,7 @@ struct KnownFolder {
     path: String,
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tauri::command]
 fn known_folders(app: AppHandle) -> Vec<KnownFolder> {
     let locations = [
@@ -83,6 +83,75 @@ fn known_folders(_app: AppHandle) -> Vec<KnownFolder> {
     })
 }
 
+/// On the iPad: U-file's Documents folder ("On My iPad > U-file" in the
+/// Files app) and the usual sub-folders when they exist.
+#[cfg(target_os = "ios")]
+#[tauri::command]
+fn known_folders(_app: AppHandle) -> Vec<KnownFolder> {
+    let Some(documents) = planner::ios_documents() else {
+        return Vec::new();
+    };
+    let mut found = vec![KnownFolder {
+        id: "documents".into(),
+        path: documents.display().to_string(),
+    }];
+    for (id, name) in [
+        ("downloads", "Download"),
+        ("pictures", "Pictures"),
+        ("videos", "Movies"),
+        ("music", "Music"),
+    ] {
+        let path = documents.join(name);
+        if path.is_dir() {
+            found.push(KnownFolder {
+                id: id.into(),
+                path: path.display().to_string(),
+            });
+        }
+    }
+    found
+}
+
+/// Where the folder browser starts and stops: the shared storage on
+/// Android, U-file's Documents folder on the iPad, the home folder elsewhere.
+fn browse_root(app: &AppHandle) -> Result<PathBuf, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let _ = app;
+        planner::ios_documents()
+            .ok_or_else(|| "문서 폴더를 찾을 수 없습니다 / no Documents folder".into())
+    }
+    #[cfg(target_os = "android")]
+    {
+        let _ = app;
+        Ok(PathBuf::from(planner::ANDROID_STORAGE))
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        app.path()
+            .home_dir()
+            .map_err(|e| format!("홈 폴더를 찾을 수 없습니다 / home folder unavailable: {e}"))
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageInfo {
+    /// Top of what U-file browses.
+    root: String,
+    /// Where "Recycle Bin" moves go on a tablet.
+    trash: String,
+}
+
+#[tauri::command]
+fn storage_info(app: AppHandle) -> Result<StorageInfo, String> {
+    let root = browse_root(&app)?;
+    Ok(StorageInfo {
+        trash: root.join(planner::TRASH_FOLDER).display().to_string(),
+        root: root.display().to_string(),
+    })
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FolderListing {
@@ -104,13 +173,10 @@ struct FileEntry {
 /// Without a path it starts at the shared storage (or the home folder).
 #[tauri::command]
 fn list_folders(app: AppHandle, path: Option<String>) -> Result<FolderListing, String> {
+    let root = browse_root(&app)?;
     let start = match path {
         Some(path) if !path.is_empty() => PathBuf::from(path),
-        _ if cfg!(target_os = "android") => PathBuf::from(planner::ANDROID_STORAGE),
-        _ => app
-            .path()
-            .home_dir()
-            .map_err(|e| format!("홈 폴더를 찾을 수 없습니다 / home folder unavailable: {e}"))?,
+        _ => root.clone(),
     };
     let entries = std::fs::read_dir(&start).map_err(|error| {
         format!(
@@ -139,7 +205,8 @@ fn list_folders(app: AppHandle, path: Option<String>) -> Result<FolderListing, S
     folders.sort_by_key(|name| name.to_lowercase());
     files.sort_by_key(|file| file.name.to_lowercase());
     // Stop at the top of the shared storage: above it nothing can be organised.
-    let at_top = planner::is_storage_root(&start);
+    let at_top = planner::is_storage_root(&start)
+        || (cfg!(mobile) && planner::path_key(&start) == planner::path_key(&root));
     Ok(FolderListing {
         parent: (!at_top)
             .then(|| start.parent().map(|parent| parent.display().to_string()))
@@ -549,6 +616,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             known_folders,
             list_folders,
+            storage_info,
             media::read_media,
             media::save_download,
             cancel_operation,

@@ -1,13 +1,13 @@
 # U-file
 
-**U-file**은 [FileMoa](https://github.com/cybereun/FileMoa)(Windows 파일 정리 앱)를 **갤럭시 탭 S9+**에서
-쓰도록 바꾼 앱입니다. 영상은 앱 안에서 [FilmCraft](https://github.com/storytold/filmcraft) 편집기로 바로 수정할 수 있습니다. `분석 → 미리보기 → 승인 → 이동 → 기록 → 되돌리기` 흐름과 안전장치는
+**U-file**은 [FileMoa](https://github.com/cybereun/FileMoa)(Windows 파일 정리 앱)를 **갤럭시 탭 S9+**와
+**iPad**에서 쓰도록 바꾼 앱입니다. 영상은 앱 안에서 [FilmCraft](https://github.com/storytold/filmcraft) 편집기로 바로 수정할 수 있습니다. `분석 → 미리보기 → 승인 → 이동 → 기록 → 되돌리기` 흐름과 안전장치는
 그대로이고, 태블릿 화면과 안드로이드 저장소에 맞게 고쳤습니다. 원본 Windows 설명은
 [`README.windows.md`](README.windows.md)에 있습니다.
 
-## 설치
+## 설치 (갤럭시 탭)
 
-1. GitHub의 **Actions → Galaxy Tab APK**에서 최근 성공한 실행을 열고, 아래쪽
+1. GitHub의 **Actions → U-file (Galaxy Tab + iPad)**에서 최근 성공한 실행을 열고, 아래쪽
    **Artifacts**의 `U-file-GalaxyTab-verified`를 내려받아 압축을 풉니다. 이 묶음은 안드로이드
    태블릿 에뮬레이터에 설치해 정리·되돌리기·중복 삭제·영상 편집·내보내기까지 자동으로 확인을
    통과한 APK와 그 검사 결과(`selftest.json`)입니다.
@@ -34,14 +34,34 @@ base64 -w0 filemoa.jks   # 출력된 긴 글자를 복사
 
 `filemoa.jks` 파일은 잃어버리지 않게 따로 보관하세요. 저장소에는 올리지 마세요.
 
+## 설치 (iPad)
+
+App Store를 거치지 않는 앱이라, 내 Apple ID로 직접 서명해서 설치해야 합니다(무료 Apple ID로 가능).
+
+1. 같은 Actions 실행의 **Artifacts**에서 `U-file-iPad`를 내려받아 압축을 풉니다. 안에 있는
+   `U-file-iPad-<버전>-unsigned.ipa`가 앱이고, `selftest.json`은 같은 코드로 만든 앱을 iPad 시뮬레이터에서
+   자동 검사한 결과입니다.
+2. PC나 Mac에 [Sideloadly](https://sideloadly.io/)(또는 AltStore)를 설치하고, iPad를 케이블로 연결한 뒤
+   IPA를 끌어다 놓고 Apple ID로 로그인해 설치합니다.
+3. iPad의 **설정 → 일반 → VPN 및 기기 관리**에서 내 Apple ID 개발자를 신뢰합니다. iPadOS 16 이상이라면
+   **설정 → 개인정보 보호 및 보안 → 개발자 모드**도 켜야 합니다.
+4. 무료 Apple ID로 서명한 앱은 **7일마다 다시 서명**해야 합니다(Sideloadly에서 다시 설치하면 정리 기록은
+   그대로 남습니다). 유료 Apple 개발자 계정(연 $99)이라면 1년간 유지됩니다.
+
+iPad에서 정리할 파일은 **파일 앱 → 나의 iPad → U-file** 폴더에 넣습니다. iPadOS는 앱이 자기 폴더 밖의
+파일(다른 앱, iCloud Drive)을 마음대로 옮기지 못하게 막기 때문입니다. 정리 결과, 휴지통
+(`U-file_휴지통`), 영상 편집 결과(`U-file`)도 모두 이 폴더 안에 생깁니다.
+
 ## 외부 전송 없음
 
-탭용 U-file은 **파일도, 파일 이름도 기기 밖으로 보내지 않습니다.**
+탭용·iPad용 U-file은 **파일도, 파일 이름도 기기 밖으로 보내지 않습니다.**
 
 - APK에 인터넷 권한(`INTERNET`)이 아예 없습니다. 그래서 앱이 바깥에 연결하려 해도 안드로이드가 막습니다.
   CI는 설치한 APK에 이 권한이 없는지, 바깥 주소로의 요청이 실제로 막히는지 매번 확인합니다.
 - 화면(WebView)도 앱 안의 페이지·기기의 파일에만 접근하도록 제한했습니다(CSP).
-- 그래서 탭에서는 AI 분류(OpenAI·Claude·Gemini)가 빠져 있습니다. 정리, 되돌리기, 중복·대용량 파일,
+- iPad판에는 인터넷 권한이라는 개념이 없지만, 연결을 여는 코드 자체가 빠져 있고 화면도 바깥 주소에
+  연결하지 못하게 막혀 있습니다(시뮬레이터 검사에서 같은 방식으로 확인).
+- 그래서 탭과 iPad에서는 AI 분류(OpenAI·Claude·Gemini)가 빠져 있습니다. 정리, 되돌리기, 중복·대용량 파일,
   영상 편집은 모두 기기 안에서만 동작합니다.
 
 ## 탭에서 달라진 점

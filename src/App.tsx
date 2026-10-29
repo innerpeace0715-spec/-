@@ -48,7 +48,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import appIcon from './assets/app-icon.png';
-import { IS_ANDROID, androidBridge, confirmBox } from './platform';
+import { IS_ANDROID, IS_IOS, IS_MOBILE, androidBridge, confirmBox } from './platform';
 import VideoEditor from './VideoEditor';
 import { runSelfTest, selfTestRequested } from './selftest';
 import './styles.css';
@@ -187,11 +187,17 @@ const labels = {
   },
 } as const;
 
-/** Wording that differs on the Galaxy Tab: there is no Windows account or Recycle Bin. */
-const androidLabels = {
+/** Wording that differs on the tablets: there is no Windows account or Recycle Bin. */
+const mobileLabels = {
   ko: { recycle: 'U-file 휴지통으로 보내기', localOnly: '키는 이 앱 전용 저장공간에만 보관되며 다른 앱은 읽을 수 없습니다.' },
   en: { recycle: 'Move to U-file trash', localOnly: 'Keys stay in this app\'s private storage, which other apps cannot read.' },
 } as const;
+
+/** Where the tablet's trash folder shows up in its own file manager. */
+function trashPlace(lang: 'ko' | 'en'): string {
+  if (IS_IOS) return lang === 'ko' ? '파일 앱의 나의 iPad › U-file › U-file_휴지통' : 'Files › On My iPad › U-file › U-file_휴지통';
+  return lang === 'ko' ? '내장 저장소의 U-file_휴지통' : 'U-file_휴지통 (internal storage)';
+}
 
 function readLocal<T>(key: string, fallback: T): T {
   try {
@@ -279,7 +285,7 @@ export default function App() {
   const [updateDialogState, setUpdateDialogState] = useState<UpdateDialogState>('idle');
   const [updateError, setUpdateError] = useState('');
   const [updateProgress, setUpdateProgress] = useState('');
-  const t = IS_ANDROID ? { ...labels[lang], ...androidLabels[lang] } : labels[lang];
+  const t = IS_MOBILE ? { ...labels[lang], ...mobileLabels[lang] } : labels[lang];
   const shown = (value: string) => friendlyPath(value, lang);
   const [browser, setBrowser] = useState<FolderListing | null>(null);
   const [browseMode, setBrowseMode] = useState<BrowseMode>('folder');
@@ -338,7 +344,7 @@ export default function App() {
   const selectedProvider = aiProviders.find((provider) => provider.id === selectedAi);
 
   async function choose() {
-    if (IS_ANDROID) {
+    if (IS_MOBILE) {
       setBrowseMode('folder');
       await browse(paths[paths.length - 1]);
       return;
@@ -365,7 +371,7 @@ export default function App() {
 
   /** "파일 수정": pick a video, then open it in the FilmCraft editor. */
   async function chooseVideo() {
-    if (IS_ANDROID) {
+    if (IS_MOBILE) {
       setBrowseMode('video');
       await browse(paths[paths.length - 1]);
       return;
@@ -642,8 +648,8 @@ export default function App() {
 
   async function recycleSelected(pathsToRecycle: string[]) {
     if (!pathsToRecycle.length) return;
-    const confirmed = await confirmBox(IS_ANDROID
-      ? (lang === 'ko' ? `선택한 ${pathsToRecycle.length}개 항목을 내장 저장소의 U-file_휴지통 폴더로 옮길까요? 그 폴더에서 언제든 되살릴 수 있습니다.` : `Move ${pathsToRecycle.length} selected item(s) to the U-file_휴지통 folder? You can restore them from there at any time.`)
+    const confirmed = await confirmBox(IS_MOBILE
+      ? (lang === 'ko' ? `선택한 ${pathsToRecycle.length}개 항목을 ${trashPlace(lang)} 폴더로 옮길까요? 그 폴더에서 언제든 되살릴 수 있습니다.` : `Move ${pathsToRecycle.length} selected item(s) to the ${trashPlace(lang)} folder? You can restore them from there at any time.`)
       : (lang === 'ko' ? `선택한 ${pathsToRecycle.length}개 항목을 휴지통으로 보낼까요?` : `Move ${pathsToRecycle.length} selected item(s) to the Recycle Bin?`), lang);
     if (!confirmed) return;
     setBusy(true);
@@ -812,8 +818,8 @@ export default function App() {
   }
 
   async function checkForUpdate(manual: boolean) {
-    // The tablet gets new versions as an APK from GitHub Actions.
-    if (IS_ANDROID) return;
+    // The tablets get new versions as an APK/IPA from GitHub Actions.
+    if (IS_MOBILE) return;
     if (manual) {
       setBusy(true);
       setNotice(t.updateLoading);
@@ -872,14 +878,12 @@ export default function App() {
   }
 
   useEffect(() => {
-    // The tablet build has no AI providers: it never sends anything off the device.
-    if (!IS_ANDROID) void refreshAiProviders();
+    // The tablet builds have no AI providers: they never send anything off the device.
+    if (!IS_MOBILE) void refreshAiProviders();
     void invoke<KnownFolder[]>('known_folders').then(setKnownFolders).catch(() => undefined);
-    if (IS_ANDROID) {
-      checkStorageAccess();
-      // CI's emulator check of the installed APK (src/selftest.ts).
-      if (!startupRan.current) void selfTestRequested().then((requested) => { if (requested) void runSelfTest(setEditing); });
-    }
+    if (IS_ANDROID) checkStorageAccess();
+    // CI's emulator/simulator check of the installed app (src/selftest.ts).
+    if (IS_MOBILE && !startupRan.current) void selfTestRequested().then((requested) => { if (requested) void runSelfTest(setEditing); });
     void invoke<string | null>('startup_path')
       .then((initialPath) => {
         if (shouldUseStartupPath(initialPath)) {
@@ -1035,7 +1039,7 @@ export default function App() {
         { key: 'folder', icon: FolderOpen, action: choose },
         { key: 'preview', icon: Search, action: makePlan, disabled: !path },
         { key: 'execute', icon: Play, action: execute, disabled: !plan || !plan.planId || !selectedCount },
-        ...(IS_ANDROID ? [] : [{ key: 'aiClassify', icon: Bot, action: runAiClassification, disabled: !plan || !plan.planId || !pendingCount }]),
+        ...(IS_MOBILE ? [] : [{ key: 'aiClassify', icon: Bot, action: runAiClassification, disabled: !plan || !plan.planId || !pendingCount }]),
         { key: 'editFile', icon: Clapperboard, action: chooseVideo },
       ]
     : tab === 'manage'
@@ -1044,7 +1048,7 @@ export default function App() {
           { key: 'duplicates', icon: Copy, action: scanDuplicates, disabled: !path },
           { key: 'large', icon: Search, action: scanLargeFiles, disabled: !path },
           { key: 'emptyFolders', icon: FolderTree, action: scanEmptyFolders, disabled: !path },
-          ...(IS_ANDROID ? [] : [{ key: 'aiSettings', icon: Bot, action: () => setPanel('ai') }]),
+          ...(IS_MOBILE ? [] : [{ key: 'aiSettings', icon: Bot, action: () => setPanel('ai') }]),
         ]
       : [
           { key: 'undo', icon: Undo2, action: () => void openUndoPreview(), disabled: !runs.some((run) => run.executedCount > 0) },
@@ -1065,7 +1069,7 @@ export default function App() {
           <Settings size={20} />{pendingUpdate && <span className="update-dot" />}
         </button>
         {settings && <div className="settings-menu">
-          {!IS_ANDROID && <button onClick={() => void checkForUpdate(true)} disabled={busy}><RefreshCw size={15} /> {t.update}</button>}
+          {!IS_MOBILE && <button onClick={() => void checkForUpdate(true)} disabled={busy}><RefreshCw size={15} /> {t.update}</button>}
           <button onClick={() => setLang((value) => value === 'ko' ? 'en' : 'ko')}><span className="menu-language">A/가</span> {t.language}</button>
         </div>}
       </header>
@@ -1169,8 +1173,8 @@ export default function App() {
               <span className="keep-spacer" />
               <button className="secondary-action danger-action" onClick={() => void recycleSelected(duplicateSelection)} disabled={busy || !duplicateSelection.length}><Trash2 size={15} /> {t.recycle} ({duplicateSelection.length})</button>
             </div>
-            <div className="keep-note">{IS_ANDROID
-              ? (lang === 'ko' ? '각 그룹의 파일 1개는 항상 남습니다 · 보낸 파일은 내장 저장소의 U-file_휴지통 폴더에서 되살리거나 완전히 지울 수 있습니다' : 'One file of each group always stays · Removed files wait in the U-file_휴지통 folder, where you can restore or delete them')
+            <div className="keep-note">{IS_MOBILE
+              ? (lang === 'ko' ? `각 그룹의 파일 1개는 항상 남습니다 · 보낸 파일은 ${trashPlace(lang)} 폴더에서 되살리거나 완전히 지울 수 있습니다` : `One file of each group always stays · Removed files wait in the ${trashPlace(lang)} folder, where you can restore or delete them`)
               : (lang === 'ko' ? '각 그룹의 파일 1개는 항상 남습니다 · 휴지통으로 보낸 파일은 Windows 휴지통에서 복원할 수 있습니다' : 'One file of each group always stays · Files sent to the Recycle Bin can be restored from Windows')}</div>
             {duplicates.map((group, index) => {
               const files = groupFiles(group);
@@ -1218,7 +1222,7 @@ export default function App() {
             {selectedProvider.id !== 'ollama' && <label className="field-label">{t.apiKey}<input type="password" value={aiKeyDraft} onChange={(event) => setAiKeyDraft(event.target.value)} placeholder={selectedProvider.keyPresent ? '••••••••••••••••' : 'sk-…'} autoComplete="new-password" /></label>}
             <label className="field-label">{t.model}{selectedProvider.id === 'ollama' && selectedProvider.ollamaModels.length ? <select value={aiModelDraft} onChange={(event) => setAiModelDraft(event.target.value)}>{selectedProvider.ollamaModels.map((model) => <option value={model} key={model}>{model}</option>)}</select> : <><input value={aiModelDraft} onChange={(event) => setAiModelDraft(event.target.value)} placeholder={selectedProvider.model} list="ai-model-options" /><datalist id="ai-model-options">{aiModelOptions.map((model) => <option value={model} key={model} />)}</datalist></>}<small>{t.modelHint}</small>{selectedProvider.id !== 'ollama' && selectedProvider.keyPresent && <button type="button" className="secondary-action" onClick={() => void loadAiModels()} disabled={busy}>{lang === 'ko' ? '사용 가능한 모델 불러오기' : 'Load available models'}</button>}</label>
             <div className="ai-actions"><button onClick={() => void saveAiProvider()} disabled={busy || (selectedProvider.id !== 'ollama' && !aiKeyDraft && !selectedProvider.keyPresent)}><CheckCircle2 size={16} /> {t.save}</button><button onClick={() => void testAiProvider()} disabled={busy || (selectedProvider.id !== 'ollama' && !selectedProvider.keyPresent && !aiKeyDraft)}><RefreshCw size={16} /> {t.test}</button>{selectedProvider.id !== 'ollama' && selectedProvider.keyPresent && <button className="danger-action" onClick={() => void removeAiKey()} disabled={busy}><Trash2 size={16} /> {t.removeKey}</button>}</div>
-            {selectedProvider.id !== 'ollama' && (IS_ANDROID
+            {selectedProvider.id !== 'ollama' && (IS_MOBILE
               // A link would replace the app inside its WebView; show the address to open in a browser.
               ? <p className="registration-link"><ExternalLink size={15} /> {t.getKey}: <span className="selectable">{selectedProvider.registrationUrl}</span></p>
               : <a className="registration-link" href={selectedProvider.registrationUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} /> {t.getKey}</a>)}

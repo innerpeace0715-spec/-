@@ -1,14 +1,25 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
+import { IS_IOS } from './platform';
 import type { EditorEvent } from './VideoEditor';
 
 /**
- * End-to-end check of the installed APK, run by CI on an Android emulator
- * (.github/workflows/android.yml). It starts only when the test folder holds
- * a RUN_SELFTEST file, works only inside that folder, and writes its report
- * to Download/U-file/U-file-selftest.json.
+ * End-to-end check of the installed app, run by CI on an Android emulator and
+ * an iPad simulator (.github/workflows/android.yml). It starts only when the
+ * test folder holds a RUN_SELFTEST file, works only inside that folder, and
+ * writes its report as U-file-selftest.json to where U-file saves files
+ * (Download/U-file on Android, Documents/U-file on the iPad).
+ *
+ * The test folder is Download/ufile-selftest on Android and
+ * Documents/ufile-selftest on the iPad.
  */
-export const SELFTEST_DIR = '/storage/emulated/0/Download/ufile-selftest';
-const DATA = `${SELFTEST_DIR}/data`;
+type StorageInfo = { root: string; trash: string };
+let storage: StorageInfo | null = null;
+
+async function dirs() {
+  storage ??= await invoke<StorageInfo>('storage_info');
+  const base = IS_IOS ? `${storage.root}/ufile-selftest` : `${storage.root}/Download/ufile-selftest`;
+  return { base, data: `${base}/data`, trash: storage.trash };
+}
 
 type Listing = { path: string; folders: string[]; files: { name: string; sizeBytes: number }[] };
 type Action = { status: string; destinationPath: string };
@@ -37,13 +48,14 @@ function editorEvent(phases: EditorEvent['phase'][], timeoutMs: number): Promise
 
 export async function selfTestRequested(): Promise<boolean> {
   try {
-    return (await listing(SELFTEST_DIR)).files.some((file) => file.name === 'RUN_SELFTEST');
+    return (await listing((await dirs()).base)).files.some((file) => file.name === 'RUN_SELFTEST');
   } catch {
     return false;
   }
 }
 
 export async function runSelfTest(openEditor: (path: string) => void): Promise<void> {
+  const { data: DATA, trash: TRASH } = await dirs();
   const steps: Step[] = [];
   async function step(name: string, check: () => Promise<string>) {
     try {
@@ -111,7 +123,7 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
   await step('send a duplicate to the U-file trash', async () => {
     const outcome = await invoke<{ recycled: string[]; skipped: { reason: string }[] }>('recycle_files', { paths: [copy] });
     expect(outcome.recycled.length === 1, JSON.stringify(outcome.skipped));
-    const trash = await listing('/storage/emulated/0/U-file_휴지통');
+    const trash = await listing(TRASH);
     expect(trash.folders.length > 0, 'trash folder is empty');
     return `trash: ${trash.folders.join(', ')}`;
   });

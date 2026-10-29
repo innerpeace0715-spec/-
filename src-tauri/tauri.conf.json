@@ -28,7 +28,8 @@
           "allow": [
             "/storage/emulated/0/**",
             "/storage/*/**",
-            "$HOME/**"
+            "$HOME/**",
+            "$DOCUMENT/**"
           ],
           "requireLiteralLeadingDot": true
         }
@@ -51,6 +52,9 @@
         "displayLanguageSelector": true,
         "installerHooks": "nsis/hooks.nsh"
       }
+    },
+    "iOS": {
+      "minimumSystemVersion": "16.4"
     }
   },
   "plugins": {

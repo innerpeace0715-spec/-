@@ -122,6 +122,10 @@ describe('Galaxy Tab paths', () => {
     expect(friendlyPath('/sdcard/DCIM', 'en')).toBe('Internal storage/DCIM');
     expect(friendlyPath('/storage/emulated/01/x', 'ko')).toBe('/storage/emulated/01/x');
     expect(friendlyPath('C:\\Users\\a\\Downloads', 'ko')).toBe('C:\\Users\\a\\Downloads');
+    const docs = '/private/var/mobile/Containers/Data/Application/0A1B2C3D-0000-1111-2222-333344445555/Documents';
+    expect(friendlyPath(`${docs}/Movies/a.mp4`, 'ko')).toBe('나의 iPad/U-file/Movies/a.mp4');
+    expect(friendlyPath(docs.replace('/private', ''), 'en')).toBe('On My iPad/U-file');
+    expect(friendlyPath(`${docs}2/x`, 'ko')).toBe(`${docs}2/x`);
   });
 
   it('keeps the separator a path already uses', () => {

@@ -1,9 +1,11 @@
-name: Galaxy Tab APK
+name: U-file (Galaxy Tab + iPad)
 
 # Every push checks the code, builds FilmCraft's web editor from
-# vendor/filmcraft, and builds an APK for the Galaxy Tab S9+ (arm64) with the
-# editor inside. The APK is attached to the run as the "U-file-GalaxyTab"
-# artifact.
+# vendor/filmcraft, and builds U-file with the editor inside:
+# - an APK for the Galaxy Tab S9+ (arm64), installed on an Android tablet
+#   emulator and checked end to end: "U-file-GalaxyTab-verified";
+# - an unsigned IPA for the iPad (sign it with Sideloadly/AltStore), whose
+#   code is checked end to end on an iPad simulator: "U-file-iPad".
 on:
   push:
   pull_request:
@@ -179,5 +181,115 @@ jobs:
           name: U-file-GalaxyTab-verified
           path: |
             apk/*.apk
+            selftest/selftest.json
+          if-no-files-found: error
+
+  # Small media files for the iPad simulator's self-test (macOS runners have
+  # no ffmpeg).
+  fixtures:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Make the test files
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          mkdir fixtures
+          ffmpeg -loglevel error -f lavfi -i testsrc2=size=320x240:rate=24 -f lavfi -i sine=frequency=440 \
+            -t 2 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest fixtures/clip.mp4
+          ffmpeg -loglevel error -f lavfi -i testsrc2=size=320x240 -frames:v 1 fixtures/photo.jpg
+          cp fixtures/photo.jpg fixtures/photo-copy.jpg
+          printf 'U-file self-test\n' > fixtures/notes.txt
+          printf '%%PDF-1.4\n%%%%EOF\n' > fixtures/report.pdf
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selftest-fixtures
+          path: fixtures
+
+  ipad:
+    needs: [check, filmcraft]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install XcodeGen
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: filmcraft-web
+          path: public/filmcraft
+      # The Xcode project is generated fresh each time; U-file's own settings
+      # come from src-tauri/Info.ios.plist and tauri.conf.json.
+      - name: Create the Xcode project
+        run: npx tauri ios init --ci
+      - name: Build the iPad app (unsigned IPA)
+        run: npx tauri ios build --no-sign --ci
+      - name: Build the same app for the iPad simulator
+        run: npx tauri ios build --target aarch64-sim --no-sign --ci
+      - name: Collect the builds
+        run: |
+          version=$(node -p "require('./package.json').version")
+          mkdir -p out sim
+          find src-tauri/gen/apple -name '*.ipa' -o -name '*.app' -prune | grep -v xcarchive || true
+          ipa=$(find src-tauri/gen/apple -name '*.ipa' | grep -v sim | head -n1)
+          app=$(find src-tauri/gen/apple -name '*.app' -prune | grep -v xcarchive | grep -i sim | head -n1)
+          test -n "$ipa" && test -n "$app"
+          cp "$ipa" "out/U-file-iPad-${version}-unsigned.ipa"
+          ditto -c -k --keepParent "$app" sim/U-file-sim.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: U-file-iPad-build
+          path: out/*.ipa
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: U-file-iPad-simulator
+          path: sim/U-file-sim.zip
+          if-no-files-found: error
+
+  # Run the app's end-to-end self-test on an iPad simulator, then publish the
+  # IPA built from the same commit as "U-file-iPad".
+  ipad-verify:
+    needs: [ipad, fixtures]
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: U-file-iPad-simulator
+          path: sim
+      - uses: actions/download-artifact@v4
+        with:
+          name: selftest-fixtures
+          path: fixtures
+      - uses: actions/download-artifact@v4
+        with:
+          name: U-file-iPad-build
+          path: ipa
+      - name: Self-test on an iPad simulator
+        run: |
+          ditto -x -k sim/U-file-sim.zip sim
+          scripts/simulator-selftest.sh "$(find sim -maxdepth 1 -name '*.app' | head -n1)" fixtures selftest
+      - name: Keep the test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-iPad-selftest-evidence
+          path: selftest
+      - name: Publish the checked IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-iPad
+          path: |
+            ipa/*.ipa
             selftest/selftest.json
           if-no-files-found: error

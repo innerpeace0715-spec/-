@@ -355,6 +355,7 @@ fn path_is_under(path: &Path, parent: &Path) -> bool {
 }
 
 /// Shared storage on Android: what the Files app calls "Internal storage".
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
 pub const ANDROID_STORAGE: &str = "/storage/emulated/0";
 
 /// The top of a storage volume on Android (internal storage or an SD card),
@@ -371,6 +372,13 @@ pub fn is_storage_root(path: &Path) -> bool {
         ["storage", volume] => volume.len() == 9 && volume.as_bytes()[4] == b'-',
         _ => false,
     }
+}
+
+/// The iPad app's own Documents folder: what the Files app shows as
+/// "On My iPad > U-file". iOS gives the app nothing outside its sandbox.
+#[cfg(target_os = "ios")]
+pub fn ios_documents() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Documents"))
 }
 
 /// Android system and app-private locations: `Android/data`, `Android/obb`
@@ -393,7 +401,8 @@ fn android_protected(key: &str) -> bool {
     }
 }
 
-/// Folder at the top of each Android volume that "Recycle Bin" moves go to.
+/// Folder at the top of each Android volume (on the iPad: of Documents) that
+/// "Recycle Bin" moves go to.
 #[cfg_attr(windows, allow(dead_code))]
 pub const TRASH_FOLDER: &str = "U-file_휴지통";
 /// `TRASH_FOLDER` as `path_key` spells it.
@@ -457,10 +466,13 @@ fn protected_spelling(path: &Path) -> bool {
         .iter()
         .any(|dir| path_is_under(path, dir));
     let android = cfg!(target_os = "android") && android_protected(&key);
+    // On the iPad the trash lives inside Documents, next to the user's files.
+    let ios_trash = cfg!(target_os = "ios") && component_match(TRASH_FOLDER);
     system_root
         || program_root
         || environment
         || android
+        || ios_trash
         || component_match(".git")
         || component_match("node_modules")
 }

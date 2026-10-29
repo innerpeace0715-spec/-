@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { ArrowLeft, CheckCircle2, Clapperboard, RefreshCw } from 'lucide-react';
-import { IS_ANDROID, confirmBox } from './platform';
+import { IS_MOBILE, confirmBox } from './platform';
 import { basename, friendlyPath } from './utils';
 
 /** What FilmCraft's web build puts on its window (docs/web.md in vendor/filmcraft). */
@@ -48,8 +48,8 @@ function firstItem(result: ImportResult): unknown {
 }
 
 /**
- * Saving in FilmCraft clicks a hidden download link, which the Android
- * WebView ignores. Catch those clicks and write the file to the tablet.
+ * Saving in FilmCraft clicks a hidden download link, which the Android and
+ * iPad WebViews ignore. Catch those clicks and write the file to the tablet.
  */
 function captureDownloads(win: FilmCraftWindow, onSaved: (path: string) => void, onError: (message: string) => void) {
   const anchor = win.HTMLAnchorElement.prototype;
@@ -88,7 +88,7 @@ export default function VideoEditor({ path, lang, onClose }: { path: string; lan
         setSource(EDITOR_URL);
         const win = await whenReady(() => frame.current, () => cancelled);
         if (cancelled) return;
-        if (IS_ANDROID) {
+        if (IS_MOBILE) {
           captureDownloads(win, (file) => {
             setSaved((list) => [...list, file]);
             report({ phase: 'saved', path: file });

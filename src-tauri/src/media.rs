@@ -10,7 +10,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::Manager;
 
 /// Extensions FilmCraft opens as video (MP4/MOV, Matroska/WebM, AVI, MXF, MPEG-TS).
@@ -86,7 +86,14 @@ fn save_folder(_app: &AppHandle, name: &Path) -> Result<PathBuf, String> {
         .join("U-file"))
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(target_os = "ios")]
+fn save_folder(_app: &AppHandle, _name: &Path) -> Result<PathBuf, String> {
+    crate::planner::ios_documents()
+        .map(|documents| documents.join("U-file"))
+        .ok_or_else(|| "문서 폴더를 찾을 수 없습니다 / no Documents folder".into())
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn save_folder(app: &AppHandle, _name: &Path) -> Result<PathBuf, String> {
     app.path()
         .download_dir()

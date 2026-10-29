@@ -172,11 +172,17 @@ export function formatDay(secs: number): string {
 
 const ANDROID_STORAGE = '/storage/emulated/0';
 
+/** U-file's Documents folder inside the iPad app sandbox. */
+const IOS_DOCUMENTS = /^(?:\/private)?\/var\/mobile\/Containers\/Data\/Application\/[^/]+\/Documents(?=\/|$)/;
+
 /**
- * A path as the Galaxy Tab's Files app names it: "내장 저장소/Download"
- * instead of "/storage/emulated/0/Download". Other paths are unchanged.
+ * A path as the tablet's own file manager names it: "내장 저장소/Download"
+ * instead of "/storage/emulated/0/Download" on the Galaxy Tab, "나의 iPad/U-file/…"
+ * for U-file's Documents folder on the iPad. Other paths are unchanged.
  */
 export function friendlyPath(path: string, language: Language): string {
+  const ipad = path.match(IOS_DOCUMENTS);
+  if (ipad) return `${language === 'ko' ? '나의 iPad/U-file' : 'On My iPad/U-file'}${path.slice(ipad[0].length)}`;
   const label = language === 'ko' ? '내장 저장소' : 'Internal storage';
   for (const root of [ANDROID_STORAGE, '/sdcard']) {
     if (path === root) return label;

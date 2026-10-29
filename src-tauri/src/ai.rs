@@ -22,17 +22,18 @@ use tauri::{AppHandle, Manager};
 const GEMINI_MODELS_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const OLLAMA_ENDPOINT: &str = "http://127.0.0.1:11434";
 const CONFIG_FILE: &str = "ai-providers.json";
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 static TLS_PROVIDER: std::sync::Once = std::sync::Once::new();
 
-/// The tablet build has no network access at all (no INTERNET permission),
-/// so nothing about the user's files can leave the device.
-#[cfg(target_os = "android")]
+/// The tablet builds (Galaxy Tab, iPad) never open a connection, so nothing
+/// about the user's files can leave the device. Android also has no
+/// INTERNET permission.
+#[cfg(any(target_os = "android", target_os = "ios"))]
 fn http_client(_: Duration) -> Result<Client, String> {
     Err("U-file 태블릿판은 파일 정보를 외부로 보내지 않습니다 / the tablet build sends nothing off the device".into())
 }
 
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn http_client(timeout: Duration) -> Result<Client, String> {
     TLS_PROVIDER.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
