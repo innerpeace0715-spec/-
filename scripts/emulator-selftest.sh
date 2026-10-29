@@ -42,6 +42,7 @@ echo "== run"
 adb logcat -c
 adb shell am start -W -n "$pkg/.MainActivity"
 report=/sdcard/Download/U-file/U-file-selftest.json
+progress=/sdcard/Download/ufile-selftest/progress.log
 for round in $(seq 1 120); do
   sleep 20
   adb exec-out screencap -p > "$out/screen-$(printf '%03d' "$round").png" || true
@@ -49,9 +50,18 @@ for round in $(seq 1 120); do
     adb pull "$report" "$out/selftest.json" >/dev/null
     break
   fi
+  # The page logs as soon as it loads; silence after 2 minutes means it never ran.
+  if [ "$round" -ge 6 ] && ! adb shell test -s "$progress"; then
+    echo "FAIL: the app's page did not start the self-test"
+    break
+  fi
 done
 adb exec-out screencap -p > "$out/screen-final.png" || true
+echo "== progress.log"
+adb shell cat "$progress" 2>/dev/null || echo "(none)"
 adb logcat -d > "$out/logcat.txt" || true
+echo "== app log (last lines)"
+grep -iE 'chromium|tauri|wry|filemoa|AndroidRuntime|FATAL' "$out/logcat.txt" | tail -n 150 || true
 
 if [ ! -f "$out/selftest.json" ]; then
   echo "FAIL: the self-test did not finish within 40 minutes"

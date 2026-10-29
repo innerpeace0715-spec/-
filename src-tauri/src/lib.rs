@@ -582,9 +582,42 @@ fn fit_window_to_screen(window: &tauri::WebviewWindow) {
     let _ = window.center();
 }
 
+/// Folder the self-test works in: Download/ufile-selftest on Android,
+/// Documents/ufile-selftest on the iPad (see src/selftest.ts).
+fn selftest_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let root = browse_root(app)?;
+    Ok(if cfg!(target_os = "ios") {
+        root.join("ufile-selftest")
+    } else {
+        root.join("Download").join("ufile-selftest")
+    })
+}
+
+/// Append a line to the self-test's progress.log, which CI prints. Does
+/// nothing unless CI asked for a self-test (RUN_SELFTEST is present).
+#[tauri::command]
+fn selftest_log(app: AppHandle, line: String) -> Result<(), String> {
+    use std::io::Write;
+    let dir = selftest_dir(&app)?;
+    if !dir.join("RUN_SELFTEST").is_file() {
+        return Ok(());
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("progress.log"))
+        .map_err(|e| e.to_string())?;
+    writeln!(file, "{} {line}", chrono::Local::now().format("%H:%M:%S")).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
+    // The page cannot reliably tell an iPad from a Mac by its user agent, so
+    // say which platform this build is for.
+    let builder = tauri::Builder::default().append_invoke_initialization_script(format!(
+        "window.__UFILE_PLATFORM__ = {:?};",
+        std::env::consts::OS
+    ));
     // Must be the first plugin. A second launch (the Explorer context menu,
     // a shortcut) exits at once; this running window receives its folder.
     #[cfg(desktop)]
@@ -617,6 +650,7 @@ pub fn run() {
             known_folders,
             list_folders,
             storage_info,
+            selftest_log,
             media::read_media,
             media::save_download,
             cancel_operation,

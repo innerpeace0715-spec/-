@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: ufile-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

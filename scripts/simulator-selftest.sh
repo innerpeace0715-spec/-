@@ -34,6 +34,7 @@ touch "$docs/ufile-selftest/RUN_SELFTEST"
 echo "== run"
 xcrun simctl launch "$udid" "$bundle"
 report="$docs/U-file/U-file-selftest.json"
+progress="$docs/ufile-selftest/progress.log"
 for round in $(seq 1 120); do
   sleep 20
   xcrun simctl io "$udid" screenshot "$out/screen-$(printf '%03d' "$round").png" >/dev/null 2>&1 || true
@@ -41,8 +42,19 @@ for round in $(seq 1 120); do
     cp "$report" "$out/selftest.json"
     break
   fi
+  # The page logs as soon as it loads; silence after 2 minutes means it never ran.
+  if [ "$round" -ge 6 ] && [ ! -s "$progress" ]; then
+    echo "FAIL: the app's page did not start the self-test"
+    break
+  fi
 done
 xcrun simctl io "$udid" screenshot "$out/screen-final.png" >/dev/null 2>&1 || true
+echo "== progress.log"
+cat "$progress" 2>/dev/null || echo "(none)"
+cp "$progress" "$out/" 2>/dev/null || true
+echo "== app log (last lines)"
+xcrun simctl spawn "$udid" log show --last 45m --style compact \
+  --predicate 'process == "U-file" OR subsystem CONTAINS "WebKit"' 2>/dev/null | tail -n 150 || true
 
 if [ ! -f "$out/selftest.json" ]; then
   echo "FAIL: the self-test did not finish within 40 minutes"

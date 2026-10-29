@@ -46,7 +46,13 @@ function editorEvent(phases: EditorEvent['phase'][], timeoutMs: number): Promise
   });
 }
 
+/** One line in progress.log (CI prints it; a no-op outside a self-test). */
+function log(line: string) {
+  void invoke('selftest_log', { line }).catch(() => undefined);
+}
+
 export async function selfTestRequested(): Promise<boolean> {
+  log(`page loaded · ios=${IS_IOS} · ${navigator.userAgent}`);
   try {
     return (await listing((await dirs()).base)).files.some((file) => file.name === 'RUN_SELFTEST');
   } catch {
@@ -58,12 +64,18 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
   const { data: DATA, trash: TRASH } = await dirs();
   const steps: Step[] = [];
   async function step(name: string, check: () => Promise<string>) {
+    log(`start: ${name}`);
     try {
       steps.push({ name, ok: true, detail: await check() });
     } catch (error) {
       steps.push({ name, ok: false, detail: error instanceof Error ? error.message : String(error) });
     }
+    const last = steps[steps.length - 1];
+    log(`${last.ok ? 'ok' : 'FAIL'}: ${name} · ${last.detail}`);
   }
+  window.addEventListener('error', (event) => log(`page error: ${event.message}`));
+  window.addEventListener('unhandledrejection', (event) => log(`unhandled: ${String(event.reason)}`));
+  window.addEventListener('ufile-editor', (event) => log(`editor: ${JSON.stringify((event as CustomEvent).detail)}`));
   const expect = (condition: boolean, message: string) => {
     if (!condition) throw new Error(message);
   };
@@ -133,7 +145,14 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
     expect(video !== undefined, 'no test video');
     const ready = editorEvent(['ready', 'error'], 10 * 60_000);
     openEditor(`${DATA}/${video!.name}`);
-    const event = await ready;
+    const watch = setInterval(() => {
+      const frame = document.querySelector<HTMLIFrameElement>('.editor-frame');
+      const inner = frame?.contentWindow as { filmcraftLoad?: unknown; document?: Document } | null;
+      const status = document.querySelector('.editor-status')?.textContent ?? '';
+      const loading = inner?.document?.getElementById('status')?.textContent ?? '';
+      log(`editor waiting · status="${status}" · load=${JSON.stringify(inner?.filmcraftLoad ?? null)} · page="${loading}"`);
+    }, 30_000);
+    const event = await ready.finally(() => clearInterval(watch));
     expect(event.phase === 'ready', event.phase === 'error' ? event.message : event.phase);
     const frame = document.querySelector<HTMLIFrameElement>('.editor-frame');
     const info = (frame?.contentWindow as { filmcraft?: { info(): unknown } } | null)?.filmcraft?.info();
@@ -155,6 +174,7 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
     return `${path} (${file!.sizeBytes} bytes)`;
   });
 
+  log('writing the report');
   const report = { ok: steps.every((entry) => entry.ok), userAgent: navigator.userAgent, steps, finishedAt: new Date().toISOString() };
   const bytes = new TextEncoder().encode(JSON.stringify(report, null, 2));
   await invoke('save_download', bytes, { headers: { 'x-name': encodeURIComponent('U-file-selftest.json') } });

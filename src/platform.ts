@@ -1,9 +1,11 @@
 import { ask } from '@tauri-apps/plugin-dialog';
 
+/** The platform the app was built for, set by lib.rs before the page runs. */
+const PLATFORM = (window as unknown as { __UFILE_PLATFORM__?: string }).__UFILE_PLATFORM__;
 /** The Galaxy Tab build: storage permission, no self-update, deletions go to the U-file trash. */
-export const IS_ANDROID = /Android/i.test(navigator.userAgent);
-/** The iPad build. iPadOS WebViews report a Mac, so a touch screen tells them apart. */
-export const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+export const IS_ANDROID = PLATFORM ? PLATFORM === 'android' : /Android/i.test(navigator.userAgent);
+/** The iPad build. Its WebView may report a Mac, so the build's own platform decides. */
+export const IS_IOS = PLATFORM ? PLATFORM === 'ios' : /iPad|iPhone|iPod/.test(navigator.userAgent);
 /**
  * A tablet build (Galaxy Tab or iPad): no system folder picker, no
  * self-update, and nothing is ever sent off the device.
