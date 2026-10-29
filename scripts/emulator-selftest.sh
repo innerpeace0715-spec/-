@@ -15,6 +15,12 @@ mkdir -p "$out"
 adb wait-for-device
 until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 5; done
 
+# A fresh emulator restarts Google Play services a few times after boot, and
+# Android kills apps that use its font provider (every WebView does) when it
+# goes down. Let it settle first.
+echo "== waiting for Play services to settle"
+sleep 60
+
 echo "== test files"
 fixtures="$(mktemp -d)"
 ffmpeg -loglevel error -f lavfi -i testsrc2=size=320x240:rate=24 -f lavfi -i sine=frequency=440 \
@@ -28,16 +34,20 @@ for attempt in $(seq 1 30); do
   adb shell 'mkdir -p /sdcard/Download && touch /sdcard/Download/.ufile-probe && rm /sdcard/Download/.ufile-probe' >/dev/null 2>&1 && break
   sleep 5
 done
-adb shell rm -rf /sdcard/Download/ufile-selftest /sdcard/Download/U-file
-adb shell mkdir -p /sdcard/Download/ufile-selftest/data
-for file in "$fixtures"/*; do
-  for attempt in 1 2 3 4 5; do
-    adb push "$file" /sdcard/Download/ufile-selftest/data/ >/dev/null && break
-    [ "$attempt" = 5 ] && exit 1
-    sleep 5
+# A clean test folder (also used when the app has to be started again).
+prepare() {
+  adb shell rm -rf /sdcard/Download/ufile-selftest /sdcard/Download/U-file /sdcard/U-file_휴지통
+  adb shell mkdir -p /sdcard/Download/ufile-selftest/data
+  for file in "$fixtures"/*; do
+    for attempt in 1 2 3 4 5; do
+      adb push "$file" /sdcard/Download/ufile-selftest/data/ >/dev/null && break
+      [ "$attempt" = 5 ] && exit 1
+      sleep 5
+    done
   done
-done
-adb shell touch /sdcard/Download/ufile-selftest/RUN_SELFTEST
+  adb shell touch /sdcard/Download/ufile-selftest/RUN_SELFTEST
+}
+prepare
 
 echo "== install"
 adb install -r "$apk"
@@ -54,6 +64,8 @@ adb logcat -c
 adb shell am start -W -n "$pkg/.MainActivity"
 report=/sdcard/Download/U-file/U-file-selftest.json
 progress=/sdcard/Download/ufile-selftest/progress.log
+launches=1
+started=0
 for round in $(seq 1 120); do
   sleep 20
   adb exec-out screencap -p > "$out/screen-$(printf '%03d' "$round").png" || true
@@ -61,8 +73,23 @@ for round in $(seq 1 120); do
     adb pull "$report" "$out/selftest.json" >/dev/null
     break
   fi
+  # Killed by the system (see above) before the report: start over, twice at most.
+  if ! adb shell pidof "$pkg" >/dev/null 2>&1; then
+    echo "the app is not running (round $round):"
+    adb shell cat "$progress" 2>/dev/null | tail -n 3 || true
+    if [ "$launches" -ge 3 ]; then
+      echo "FAIL: the app stopped $launches times"
+      break
+    fi
+    launches=$((launches + 1))
+    sleep 30
+    prepare
+    adb shell am start -W -n "$pkg/.MainActivity"
+    started=$round
+    continue
+  fi
   # The page logs as soon as it loads; silence after 2 minutes means it never ran.
-  if [ "$round" -ge 6 ] && ! adb shell test -s "$progress"; then
+  if [ $((round - started)) -ge 6 ] && ! adb shell test -s "$progress"; then
     echo "FAIL: the app's page did not start the self-test"
     break
   fi

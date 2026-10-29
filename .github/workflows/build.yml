@@ -16,8 +16,8 @@ permissions:
 
 concurrency:
   group: ufile-${{ github.ref }}
-  # A new push waits for the running checks instead of cutting them off.
-  cancel-in-progress: false
+  # A newer push replaces checks of code that is already out of date.
+  cancel-in-progress: true
 
 jobs:
   check:
