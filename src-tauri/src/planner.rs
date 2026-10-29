@@ -374,7 +374,7 @@ pub fn is_storage_root(path: &Path) -> bool {
 }
 
 /// Android system and app-private locations: `Android/data`, `Android/obb`
-/// and the rest of the per-volume `Android` folder, the FileMoa trash, and
+/// and the rest of the per-volume `Android` folder, the U-file trash, and
 /// the system partitions.
 fn android_protected(key: &str) -> bool {
     let parts: Vec<&str> = key.split('\\').filter(|part| !part.is_empty()).collect();
@@ -395,9 +395,9 @@ fn android_protected(key: &str) -> bool {
 
 /// Folder at the top of each Android volume that "Recycle Bin" moves go to.
 #[cfg_attr(windows, allow(dead_code))]
-pub const TRASH_FOLDER: &str = "FileMoa_휴지통";
+pub const TRASH_FOLDER: &str = "U-file_휴지통";
 /// `TRASH_FOLDER` as `path_key` spells it.
-const TRASH_KEY: &str = "filemoa_휴지통";
+const TRASH_KEY: &str = "u-file_휴지통";
 
 /// Resolve 8.3 short names (`PROGRA~1`), junctions and symlinks so a protected
 /// folder cannot be reached under another spelling. Falls back to the input
@@ -627,7 +627,7 @@ fn category_root(root: &Path, category: &str) -> PathBuf {
     root.join(category.replace('/', std::path::MAIN_SEPARATOR_STR))
 }
 
-fn safe_destination(dest: PathBuf) -> (PathBuf, bool) {
+pub(crate) fn safe_destination(dest: PathBuf) -> (PathBuf, bool) {
     safe_destination_with_reserved(dest, &HashSet::new())
 }
 
@@ -2992,7 +2992,7 @@ mod tests {
             "/storage/emulated/0/Android/data/com.kakao.talk",
             "/sdcard/Android/obb",
             "/storage/1A2B-3C4D/Android/data",
-            "/storage/emulated/0/FileMoa_휴지통/2026-10-29",
+            "/storage/emulated/0/U-file_휴지통/2026-10-29",
             "/data/user/0/com.cybereun.filemoa",
             "/system/app",
         ] {

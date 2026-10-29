@@ -205,3 +205,12 @@ export function underRoot(path: string, roots: string[]): string | null {
   }
   return null;
 }
+
+/** Extensions the FilmCraft editor opens as video; matches `media::VIDEO_EXTENSIONS` in Rust. */
+export const VIDEO_EXTENSIONS = ['mp4', 'm4v', 'mov', '3gp', 'mkv', 'webm', 'avi', 'mxf', 'ts', 'mts', 'm2ts'];
+
+export function isVideo(path: string): boolean {
+  const name = basename(path);
+  const dot = name.lastIndexOf('.');
+  return dot > 0 && VIDEO_EXTENSIONS.includes(name.slice(dot + 1).toLowerCase());
+}

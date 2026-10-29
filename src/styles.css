@@ -1,5 +1,5 @@
 :root {
-  font-family: Inter, "Segoe UI", sans-serif;
+  font-family: "Noto Serif KR", "Noto Serif CJK KR", "Batang", Georgia, serif;
   color-scheme: light;
   color: #2a2723;
   background: #f4efe7;
@@ -46,7 +46,8 @@ body {
 
 button,
 input,
-select {
+select,
+code {
   font: inherit;
 }
 
@@ -2159,5 +2160,113 @@ main {
 
   .keep-row {
     grid-template-columns: 32px minmax(0, 1fr) 96px;
+  }
+}
+
+/* "수정" next to a video in the preview and the large-file list. */
+.edit-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  margin: 6px 0 0;
+  padding: 4px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.browser-video span {
+  display: grid;
+  gap: 2px;
+}
+
+.browser-video small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* FilmCraft fills the screen below a thin U-file bar. */
+.editor-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: #1b1c1f;
+}
+
+.editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 56px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--surface);
+}
+
+.editor-bar button {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.editor-title {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.editor-title svg {
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--accent);
+}
+
+.editor-title .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-strong);
+}
+
+.editor-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  border-radius: 0;
+}
+
+.editor-frame {
+  flex: 1 1 auto;
+  width: 100%;
+  border: 0;
+  background: #1b1c1f;
+}
+
+@media (pointer: coarse) {
+  .edit-chip {
+    min-height: 36px;
+    padding: 6px 14px;
+    font-size: 14px;
   }
 }

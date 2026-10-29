@@ -369,12 +369,12 @@ fn unprotect_with(secret: &[u8], _: Option<&[u8]>) -> Result<Vec<u8>, String> {
 
 #[cfg(not(any(windows, target_os = "android")))]
 fn protect_with(_: &[u8], _: Option<&[u8]>) -> Result<Vec<u8>, String> {
-    Err("FileMoa의 API 키 보호는 Windows DPAPI에서만 지원됩니다.".into())
+    Err("U-file의 API 키 보호는 Windows DPAPI에서만 지원됩니다.".into())
 }
 
 #[cfg(not(any(windows, target_os = "android")))]
 fn unprotect_with(_: &[u8], _: Option<&[u8]>) -> Result<Vec<u8>, String> {
-    Err("FileMoa의 API 키 보호는 Windows DPAPI에서만 지원됩니다.".into())
+    Err("U-file의 API 키 보호는 Windows DPAPI에서만 지원됩니다.".into())
 }
 
 fn protect(secret: &[u8]) -> Result<Vec<u8>, String> {

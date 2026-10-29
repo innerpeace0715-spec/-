@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { basename, chooseKeeper, selectForRecycle, nameComplexity, cloudOnlyNotice, decideOpenFolder, duplicateGroupTitle, planSummary, formatBytes, isCancelledError, progressPercent, providerStatus, requestCount, runTitle, shouldOpenUpdateModal, shouldUseStartupPath, friendlyPath, separatorOf, underRoot } from './utils';
+import { basename, chooseKeeper, selectForRecycle, nameComplexity, cloudOnlyNotice, decideOpenFolder, duplicateGroupTitle, planSummary, formatBytes, isCancelledError, progressPercent, providerStatus, requestCount, runTitle, shouldOpenUpdateModal, shouldUseStartupPath, friendlyPath, separatorOf, underRoot, isVideo } from './utils';
 
-describe('FileMoa UI utilities', () => {
+describe('U-file UI utilities', () => {
   it('formats byte counts for the large-file view', () => {
     expect(formatBytes(0)).toBe('0 B');
     expect(formatBytes(1024 * 1024)).toBe('1.0 MB');
@@ -141,5 +141,15 @@ describe('preview paths', () => {
   it('keeps the root name when several folders are organised together', () => {
     const roots = ['/storage/emulated/0/Download', '/storage/emulated/0/DCIM/Camera'];
     expect(underRoot('/storage/emulated/0/DCIM/Camera/사진/b.jpg', roots)).toBe('Camera/사진/b.jpg');
+  });
+});
+
+describe('video files', () => {
+  it('opens only videos in the editor', () => {
+    expect(isVideo('/storage/emulated/0/DCIM/Camera/20261029_101500.mp4')).toBe(true);
+    expect(isVideo('clip.MOV')).toBe(true);
+    expect(isVideo('C:\\a\\b.mkv')).toBe(true);
+    expect(isVideo('photo.jpg')).toBe(false);
+    expect(isVideo('.mp4')).toBe(false);
   });
 });

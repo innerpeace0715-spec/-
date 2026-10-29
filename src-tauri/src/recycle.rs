@@ -10,7 +10,7 @@
 //! afterwards which items are really gone and reports the rest.
 //!
 //! Android has no Recycle Bin for files reached by path, so there the items
-//! move into a `FileMoa_휴지통` folder at the top of their storage, from where
+//! move into a `U-file_휴지통` folder at the top of their storage, from where
 //! the Files app can put them back or delete them for good.
 
 use serde::Serialize;

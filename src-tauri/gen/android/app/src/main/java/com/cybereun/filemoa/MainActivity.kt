@@ -30,7 +30,7 @@ class MainActivity : TauriActivity() {
       view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
       WindowInsetsCompat.CONSUMED
     }
-    // FileMoa moves files by path, which needs "All files access". Ask once on
+    // U-file moves files by path, which needs "All files access". Ask once on
     // a fresh start; the page offers the same button afterwards.
     if (savedInstanceState == null && !hasAllFilesAccess()) {
       openAllFilesAccessSettings()

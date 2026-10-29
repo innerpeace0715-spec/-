@@ -1,5 +1,6 @@
 mod ai;
 mod journal;
+mod media;
 mod plan_store;
 mod planner;
 mod progress;
@@ -88,6 +89,14 @@ struct FolderListing {
     path: String,
     parent: Option<String>,
     folders: Vec<String>,
+    files: Vec<FileEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileEntry {
+    name: String,
+    size_bytes: u64,
 }
 
 /// The sub-folders of `path` for the in-app folder browser. Android has no
@@ -109,14 +118,26 @@ fn list_folders(app: AppHandle, path: Option<String>) -> Result<FolderListing, S
             start.display()
         )
     })?;
-    let mut folders: Vec<String> = entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| !name.starts_with('.'))
-        .filter(|name| !planner::is_protected_path(&start.join(name)))
-        .collect();
+    let mut folders = Vec::new();
+    let mut files = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        if name.starts_with('.') || planner::is_protected_path(&start.join(&name)) {
+            continue;
+        }
+        match entry.metadata() {
+            Ok(metadata) if metadata.is_dir() => folders.push(name),
+            Ok(metadata) if metadata.is_file() => files.push(FileEntry {
+                name,
+                size_bytes: metadata.len(),
+            }),
+            _ => {}
+        }
+    }
     folders.sort_by_key(|name| name.to_lowercase());
+    files.sort_by_key(|file| file.name.to_lowercase());
     // Stop at the top of the shared storage: above it nothing can be organised.
     let at_top = planner::is_storage_root(&start);
     Ok(FolderListing {
@@ -125,6 +146,7 @@ fn list_folders(app: AppHandle, path: Option<String>) -> Result<FolderListing, S
             .flatten(),
         path: start.display().to_string(),
         folders,
+        files,
     })
 }
 
@@ -141,7 +163,7 @@ where
         }
         let Some(candidate) = arguments.next() else {
             return Err(
-                "FileMoa 셸 실행 인자에 폴더 경로가 없습니다. / The shell launch did not include a folder path."
+                "U-file 셸 실행 인자에 폴더 경로가 없습니다. / The shell launch did not include a folder path."
                     .into(),
             );
         };
@@ -527,6 +549,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             known_folders,
             list_folders,
+            media::read_media,
+            media::save_download,
             cancel_operation,
             startup_path,
             plan_organization,
@@ -552,7 +576,7 @@ pub fn run() {
             ai::apply_ai_suggestions
         ])
         .run(tauri::generate_context!())
-        .expect("error while running FileMoa");
+        .expect("error while running U-file");
 }
 
 #[cfg(test)]

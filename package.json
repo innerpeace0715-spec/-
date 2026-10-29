@@ -12,6 +12,7 @@
     "build:nsis": "npm run tauri build -- --bundles nsis"
   },
   "dependencies": {
+    "@fontsource/noto-serif-kr": "^5.3.1",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.4.1",
     "@tauri-apps/plugin-process": "^2.3.1",

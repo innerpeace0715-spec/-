@@ -1,0 +1,6 @@
+# FilmCraft needs Rust 1.95+; U-file itself stays on the version pinned in the
+# repository root. U-file only uses FilmCraft's web (WebAssembly) build.
+[toolchain]
+channel = "1.97.0"
+profile = "minimal"
+targets = ["wasm32-unknown-unknown"]

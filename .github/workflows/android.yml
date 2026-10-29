@@ -1,7 +1,9 @@
 name: Galaxy Tab APK
 
-# Every push checks the code and builds an APK for the Galaxy Tab S9+
-# (arm64). The APK is attached to the run as the "FileMoa-GalaxyTab" artifact.
+# Every push checks the code, builds FilmCraft's web editor from
+# vendor/filmcraft, and builds an APK for the Galaxy Tab S9+ (arm64) with the
+# editor inside. The APK is attached to the run as the "U-file-GalaxyTab"
+# artifact.
 on:
   push:
   pull_request:
@@ -43,8 +45,29 @@ jobs:
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
+  filmcraft:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vendor/filmcraft
+      - name: Build the FilmCraft web editor
+        run: scripts/build-filmcraft.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: filmcraft-web
+          path: public/filmcraft
+          if-no-files-found: error
+
   apk:
-    needs: check
+    needs: [check, filmcraft]
     runs-on: ubuntu-24.04
     env:
       NDK_VERSION: 27.2.12479018
@@ -70,6 +93,10 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: filmcraft-web
+          path: public/filmcraft
       # Android only installs an update over an app signed with the same key.
       # With the ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD secrets
       # every build can be installed over the last one; without them a
@@ -84,10 +111,10 @@ jobs:
             echo "$KEYSTORE_BASE64" | base64 --decode > release.jks
             password="$KEYSTORE_PASSWORD"
           else
-            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: signing with a one-off key. Uninstall the old FileMoa before installing this APK."
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: signing with a one-off key. Uninstall the old U-file before installing this APK."
             password="$(openssl rand -hex 16)"
             keytool -genkeypair -keystore release.jks -alias filemoa -keyalg RSA -keysize 2048 \
-              -validity 10000 -storepass "$password" -keypass "$password" -dname "CN=FileMoa"
+              -validity 10000 -storepass "$password" -keypass "$password" -dname "CN=U-file"
           fi
           printf 'storeFile=release.jks\npassword=%s\nkeyAlias=filemoa\n' "$password" > keystore.properties
       - name: Build the APK
@@ -98,9 +125,9 @@ jobs:
           apk=$(find src-tauri/gen/android/app/build/outputs/apk -name '*-release.apk' | head -n1)
           test -n "$apk"
           mkdir -p out
-          cp "$apk" "out/FileMoa-GalaxyTab-${version}.apk"
+          cp "$apk" "out/U-file-GalaxyTab-${version}.apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: FileMoa-GalaxyTab
+          name: U-file-GalaxyTab
           path: out/*.apk
           if-no-files-found: error

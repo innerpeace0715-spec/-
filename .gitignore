@@ -12,3 +12,6 @@ vite.config.js
 .agents/
 Thumbs.db
 .DS_Store
+
+# FilmCraft web build (scripts/build-filmcraft.sh)
+public/filmcraft/

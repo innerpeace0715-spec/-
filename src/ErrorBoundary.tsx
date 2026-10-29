@@ -11,7 +11,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
-    console.error('FileMoa render error', error, info.componentStack);
+    console.error('U-file render error', error, info.componentStack);
   }
 
   render() {
