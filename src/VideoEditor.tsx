@@ -49,7 +49,7 @@ function watchForCrash(win: FilmCraftWindow) {
 }
 
 /** What happened in the editor, as a `ufile-editor` window event (read by the self-test). */
-export type EditorEvent = { phase: 'ready'; mode: string } | { phase: 'error'; message: string } | { phase: 'saved'; path: string } | { phase: 'save-error'; message: string };
+export type EditorEvent = { phase: 'ready'; mode: string } | { phase: 'retry'; mode: string; reason: string } | { phase: 'error'; message: string } | { phase: 'saved'; path: string } | { phase: 'save-error'; message: string };
 
 function report(detail: EditorEvent) {
   window.dispatchEvent(new CustomEvent<EditorEvent>('ufile-editor', { detail }));
@@ -164,6 +164,7 @@ export default function VideoEditor({ path, lang, onClose }: { path: string; lan
             opened = RENDER_MODES[mode].replace('&', '') || 'webgpu';
           } catch (failure) {
             if (!(failure instanceof EditorCrashed) || mode + 1 >= RENDER_MODES.length) throw failure;
+            report({ phase: 'retry', mode: RENDER_MODES[mode + 1].replace('&', ''), reason: failure.message.split('\n')[0] });
             setStatus(lang === 'ko' ? '편집기를 다른 방식으로 다시 여는 중…' : 'Reopening the editor in a safer mode…');
           }
         }

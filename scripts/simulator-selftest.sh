@@ -12,8 +12,12 @@ out="$3"
 bundle=com.cybereun.filemoa
 mkdir -p "$out"
 
-udid="$(xcrun simctl list devices available -j \
-  | jq -r '[.devices | to_entries[] | select(.key | test("iOS")) | .value[] | select(.name | test("iPad"))] | last | .udid')"
+# The smallest iPad: CI's Macs have only a virtual GPU, and a 13-inch screen's
+# render targets exhaust its memory before an editor frame is drawn.
+udid="$(xcrun simctl list devices available -j | jq -r '
+  [.devices | to_entries[] | select(.key | test("iOS")) | .value[] | select(.name | test("iPad"))]
+  | (map(select(.name | test("mini"))) + map(select(.name | test("^iPad \\("))) + .) | first | .udid')"
+xcrun simctl list devices available | grep "$udid" || true
 if [ -z "$udid" ] || [ "$udid" = null ]; then
   echo "FAIL: no iPad simulator available"
   xcrun simctl list devices available
