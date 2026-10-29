@@ -2,7 +2,9 @@
 //!
 //! API keys never leave this module in a response.  On Windows they are
 //! protected with DPAPI and stored alongside non-secret provider preferences
-//! in the per-user application-data directory.
+//! in the per-user application-data directory.  On Android that directory is
+//! the app's private storage, which other apps cannot read; keys are stored
+//! there as they are.
 
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -27,8 +29,16 @@ fn http_client(timeout: Duration) -> Result<Client, String> {
     TLS_PROVIDER.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
     });
-    Client::builder()
-        .timeout(timeout)
+    let builder = Client::builder().timeout(timeout);
+    // The platform verifier needs Android-side setup Tauri does not do;
+    // verify against the bundled Mozilla root store instead.
+    #[cfg(target_os = "android")]
+    let builder = builder.tls_certs_only(
+        webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .filter_map(|der| reqwest::Certificate::from_der(der).ok()),
+    );
+    builder
         .build()
         .map_err(|e| format!("네트워크 클라이언트를 만들 수 없습니다: {e}"))
 }
@@ -346,12 +356,23 @@ fn unprotect_with(secret: &[u8], entropy: Option<&[u8]>) -> Result<Vec<u8>, Stri
     }
 }
 
-#[cfg(not(windows))]
+/// The app-private data directory is the protection on Android.
+#[cfg(target_os = "android")]
+fn protect_with(secret: &[u8], _: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    Ok(secret.to_vec())
+}
+
+#[cfg(target_os = "android")]
+fn unprotect_with(secret: &[u8], _: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    Ok(secret.to_vec())
+}
+
+#[cfg(not(any(windows, target_os = "android")))]
 fn protect_with(_: &[u8], _: Option<&[u8]>) -> Result<Vec<u8>, String> {
     Err("FileMoa의 API 키 보호는 Windows DPAPI에서만 지원됩니다.".into())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "android")))]
 fn unprotect_with(_: &[u8], _: Option<&[u8]>) -> Result<Vec<u8>, String> {
     Err("FileMoa의 API 키 보호는 Windows DPAPI에서만 지원됩니다.".into())
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { open } from '@tauri-apps/plugin-dialog';
+import { ask, open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { check, type Update } from '@tauri-apps/plugin-updater';
@@ -8,8 +8,10 @@ import {
   Ban,
   Bot,
   CalendarDays,
+  Camera,
   CheckCircle2,
   Clock3,
+  CornerLeftUp,
   Copy,
   Download,
   Eye,
@@ -22,6 +24,7 @@ import {
   Folders,
   HardDrive,
   History,
+  KeyRound,
   Image as ImageIcon,
   Layers,
   ListChecks,
@@ -36,6 +39,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   SlidersHorizontal,
+  Tablet,
   Tags,
   Trash2,
   Undo2,
@@ -44,7 +48,7 @@ import {
 } from 'lucide-react';
 import appIcon from './assets/app-icon.png';
 import './styles.css';
-import { basename, chooseKeeper, cloudOnlyNotice as cloudOnlyMessage, decideOpenFolder, dirname, duplicateGroupTitle, formatBytes, formatDay, selectForRecycle, type KeepCriterion, isCancelledError, planSummary, progressPercent, providerStatus, requestCount, runTitle as runTitleText, shouldOpenUpdateModal, shouldUseStartupPath, type OpenFolderRequest } from './utils';
+import { basename, chooseKeeper, cloudOnlyNotice as cloudOnlyMessage, decideOpenFolder, dirname, duplicateGroupTitle, formatBytes, formatDay, selectForRecycle, type KeepCriterion, isCancelledError, planSummary, progressPercent, providerStatus, requestCount, runTitle as runTitleText, shouldOpenUpdateModal, shouldUseStartupPath, type OpenFolderRequest, friendlyPath, separatorOf, underRoot } from './utils';
 
 type Category = { name: string; extensions: string[]; enabled: boolean };
 type KeywordRule = { keyword: string; category: string; caseSensitive?: boolean };
@@ -95,6 +99,7 @@ type Duplicate = {
 };
 type LargeFile = { path: string; sizeBytes: number };
 type KnownFolder = { id: string; path: string };
+type FolderListing = { path: string; parent: string | null; folders: string[] };
 type AiProvider = {
   id: string;
   displayName: string;
@@ -130,6 +135,20 @@ type UpdateDialogState = 'idle' | 'loading' | 'available' | 'latest' | 'error';
 
 const APP_VERSION = packageJson.version;
 
+/** The Galaxy Tab build: no self-update, no system folder picker, deletions go to the FileMoa trash. */
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
+type AndroidBridge = { hasAllFilesAccess(): boolean; openAllFilesAccessSettings(): void };
+/** Added by MainActivity.kt; missing on the desktop. */
+function androidBridge(): AndroidBridge | undefined {
+  return (window as unknown as { FileMoaAndroid?: AndroidBridge }).FileMoaAndroid;
+}
+
+/** Android's WebView has no reliable `confirm()`, so ask through the dialog plugin there. */
+async function confirmBox(message: string, lang: 'ko' | 'en'): Promise<boolean> {
+  if (!IS_ANDROID) return confirm(message);
+  return ask(message, { title: 'FileMoa', kind: 'warning', okLabel: lang === 'ko' ? '확인' : 'OK', cancelLabel: lang === 'ko' ? '취소' : 'Cancel' });
+}
+
 const labels = {
   ko: {
     organize: '정리', manage: '관리', safety: '안전', settings: '설정', folder: '폴더 선택',
@@ -150,6 +169,8 @@ const labels = {
     basis: '분류 기준', byType: '파일 형식', byDate: '날짜 (년-월)', byDateDay: '날짜 (년-월-일)', byYear: '연도', bySize: '파일 크기', byName: '파일명 (가나다·ABC)', dateBasis: '날짜 종류', byCreated: '생성 날짜', byModified: '수정 날짜', byAccessed: '마지막 사용', quickFolders: '빠른 폴더', desktop: '바탕화면', downloads: '다운로드', documents: '문서', pictures: '사진', videos: '동영상', music: '음악', includeHidden: '숨김 파일 포함', multiRoot: '여러 폴더', mode: '정리 모드', safeMode: '안전', normalMode: '일반', strongMode: '강력', exceptions: '예외 목록', exceptionHint: '폴더 경로 또는 확장자를 입력하면 정리에서 제외합니다.', addException: '예외 추가',
     errors: '오류', warnings: '주의', status: '상태', collision: '이름 충돌', select: '선택', recycle: '휴지통으로 보내기', emptyHint: '삭제하지 않고 후보만 표시합니다.', largeHint: '크기순으로 표시합니다. 삭제하지 않습니다.', largeThreshold: '최소 크기(MB)',
     undoPreview: '되돌리기 미리보기', undoConfirm: '선택한 정리를 되돌리기', cancel: '취소', moved: '이동됨', skipped: '건너뜀', failed: '실패', undone: '되돌림',
+    camera: '카메라', screenshots: '스크린샷', browseTitle: '정리할 폴더 고르기', browseUp: '상위 폴더', browseHere: '이 폴더 선택', browseAdd: '이 폴더 추가', browseEmpty: '하위 폴더가 없습니다. 이 폴더를 선택할 수 있습니다.',
+    permTitle: '파일 접근 권한이 필요합니다', permBody: 'Download·DCIM 같은 폴더의 파일을 정리하려면 "모든 파일에 대한 접근" 권한이 필요합니다. 설정에서 FileMoa를 허용한 뒤 돌아오세요.', permButton: '권한 설정 열기',
   },
   en: {
     organize: 'Organize', manage: 'Manage', safety: 'Safety', settings: 'Settings', folder: 'Choose folder',
@@ -169,7 +190,15 @@ const labels = {
     runAi: 'Run AI classification', reviewRequired: 'Review required', newCategory: 'New category suggestion', requestCount: 'Requests', applySuggestions: 'Apply selected suggestions to plan',
     basis: 'Classification basis', byType: 'File type', byDate: 'Date (YYYY-MM)', byDateDay: 'Date (YYYY-MM-DD)', byYear: 'Year', bySize: 'File size', byName: 'Filename (A–Z, ㄱ–ㅎ)', dateBasis: 'Date field', byCreated: 'Created', byModified: 'Modified', byAccessed: 'Last accessed', quickFolders: 'Quick folders', desktop: 'Desktop', downloads: 'Downloads', documents: 'Documents', pictures: 'Pictures', videos: 'Videos', music: 'Music', includeHidden: 'Include hidden files', multiRoot: 'Multiple folders', mode: 'Organization mode', safeMode: 'Safe', normalMode: 'Normal', strongMode: 'Strong', exceptions: 'Exclusions', exceptionHint: 'Paths or extensions entered here are excluded from organization.', addException: 'Add exclusion',
     errors: 'Errors', warnings: 'Warnings', status: 'Status', collision: 'Collision', select: 'Select', recycle: 'Move to Recycle Bin', emptyHint: 'Candidates are shown only; nothing is deleted.', largeHint: 'Sorted by size; nothing is deleted.', largeThreshold: 'Minimum size (MB)', undoPreview: 'Undo preview', undoConfirm: 'Undo selected run', cancel: 'Cancel', moved: 'Moved', skipped: 'Skipped', failed: 'Failed', undone: 'Undone',
+    camera: 'Camera', screenshots: 'Screenshots', browseTitle: 'Choose a folder to organize', browseUp: 'Up', browseHere: 'Choose this folder', browseAdd: 'Add this folder', browseEmpty: 'No subfolders. You can choose this folder.',
+    permTitle: 'File access is needed', permBody: 'To organize files in folders such as Download and DCIM, FileMoa needs "All files access". Allow it in Settings, then come back.', permButton: 'Open permission settings',
   },
+} as const;
+
+/** Wording that differs on the Galaxy Tab: there is no Windows account or Recycle Bin. */
+const androidLabels = {
+  ko: { recycle: 'FileMoa 휴지통으로 보내기', localOnly: '키는 이 앱 전용 저장공간에만 보관되며 다른 앱은 읽을 수 없습니다.' },
+  en: { recycle: 'Move to FileMoa trash', localOnly: 'Keys stay in this app\'s private storage, which other apps cannot read.' },
 } as const;
 
 function readLocal<T>(key: string, fallback: T): T {
@@ -258,9 +287,15 @@ export default function App() {
   const [updateDialogState, setUpdateDialogState] = useState<UpdateDialogState>('idle');
   const [updateError, setUpdateError] = useState('');
   const [updateProgress, setUpdateProgress] = useState('');
-  const t = labels[lang];
+  const t = IS_ANDROID ? { ...labels[lang], ...androidLabels[lang] } : labels[lang];
+  const shown = (value: string) => friendlyPath(value, lang);
+  const [browser, setBrowser] = useState<FolderListing | null>(null);
+  const [needsAccess, setNeedsAccess] = useState(false);
 
   const total = useMemo(() => plan?.actions.length ?? 0, [plan]);
+  const planRoots = plan ? (plan.rootPaths?.length ? plan.rootPaths : [plan.rootPath]) : [];
+  /** A preview path without the folder being organised in front. */
+  const inPlan = (value: string) => underRoot(value, planRoots) ?? shown(value);
   // Only a plan that still has moves waiting can be run; an executed one was consumed by the backend.
   const pendingCount = useMemo(() => plan?.actions.filter((action) => action.status === 'proposed').length ?? 0, [plan]);
   // Rows the user unchecked in the preview; everything else is approved.
@@ -309,6 +344,10 @@ export default function App() {
   const selectedProvider = aiProviders.find((provider) => provider.id === selectedAi);
 
   async function choose() {
+    if (IS_ANDROID) {
+      await browse(paths[paths.length - 1]);
+      return;
+    }
     const selected = await open({ directory: true, multiple: multiRoot, title: t.folder });
     const selectedPaths = Array.isArray(selected) ? selected : typeof selected === 'string' ? [selected] : [];
     if (selectedPaths.length) {
@@ -317,6 +356,30 @@ export default function App() {
       setPlan(null);
       setPanel('plan');
     }
+  }
+
+  /** Open the in-app folder browser at `target` (shared storage when omitted). */
+  async function browse(target?: string) {
+    try {
+      setBrowser(await invoke<FolderListing>('list_folders', { path: target ?? null }));
+    } catch (error) {
+      if (target) await browse();
+      else setNotice(String(error));
+    }
+  }
+
+  function pickBrowsed(folder: string) {
+    const next = multiRoot ? (paths.includes(folder) ? paths : [...paths, folder]) : [folder];
+    setPaths(next);
+    setPath(next.join(' · '));
+    setPlan(null);
+    setPanel('plan');
+    setBrowser(null);
+  }
+
+  function checkStorageAccess() {
+    const bridge = androidBridge();
+    setNeedsAccess(Boolean(bridge && !bridge.hasAllFilesAccess()));
   }
 
   function chooseKnownFolder(folder: KnownFolder) {
@@ -412,7 +475,7 @@ export default function App() {
         ? `대량 작업입니다. ${selectedCount}개 파일을 이동합니다. 미리보기와 경고를 확인했나요? 계속할까요?`
         : `This is a bulk operation: ${selectedCount} files will move. Have you reviewed the preview and warnings? Continue?`)
       : (lang === 'ko' ? `${selectedCount}개 파일을 이동할까요?` : `Move ${selectedCount} files?`);
-    if (!confirm(confirmation)) return;
+    if (!(await confirmBox(confirmation, lang))) return;
     setBusy(true);
     try {
       const done = await withProgress<Plan>('execute_organization', { planId: plan.planId, excluded: [...unchecked] });
@@ -446,7 +509,7 @@ export default function App() {
     if (!run) return;
     const rows = [...undoRows].filter((row) => run.actions[row]?.status === 'executed');
     const restoreCount = rows.length;
-    if (!restoreCount || !confirm(lang === 'ko' ? `${restoreCount}개 파일을 원래 위치로 되돌릴까요? 기존 파일은 덮어쓰지 않습니다.` : `Restore ${restoreCount} files to their original locations? Existing files will never be overwritten.`)) return;
+    if (!restoreCount || !(await confirmBox(lang === 'ko' ? `${restoreCount}개 파일을 원래 위치로 되돌릴까요? 기존 파일은 덮어쓰지 않습니다.` : `Restore ${restoreCount} files to their original locations? Existing files will never be overwritten.`, lang))) return;
     setBusy(true);
     try {
       const done = await invoke<Plan>('undo_organization', { runId: run.runId, only: rows });
@@ -468,7 +531,7 @@ export default function App() {
     const warning = run.executedCount > 0
       ? (lang === 'ko' ? `이 정리 기록을 삭제할까요?\n아직 이동된 파일 ${run.executedCount}개는 더 이상 되돌릴 수 없게 됩니다(파일 자체는 지워지지 않습니다).` : `Delete this history entry?\n The ${run.executedCount} files that are still moved can no longer be undone (the files themselves are not deleted).`)
       : (lang === 'ko' ? '이 정리 기록을 삭제할까요?' : 'Delete this history entry?');
-    if (!confirm(warning)) return;
+    if (!(await confirmBox(warning, lang))) return;
     setBusy(true);
     try {
       await invoke('delete_run', { runId: run.runId });
@@ -564,7 +627,9 @@ export default function App() {
 
   async function recycleSelected(pathsToRecycle: string[]) {
     if (!pathsToRecycle.length) return;
-    const confirmed = confirm(lang === 'ko' ? `선택한 ${pathsToRecycle.length}개 항목을 휴지통으로 보낼까요?` : `Move ${pathsToRecycle.length} selected item(s) to the Recycle Bin?`);
+    const confirmed = await confirmBox(IS_ANDROID
+      ? (lang === 'ko' ? `선택한 ${pathsToRecycle.length}개 항목을 내장 저장소의 FileMoa_휴지통 폴더로 옮길까요? 그 폴더에서 언제든 되살릴 수 있습니다.` : `Move ${pathsToRecycle.length} selected item(s) to the FileMoa_휴지통 folder? You can restore them from there at any time.`)
+      : (lang === 'ko' ? `선택한 ${pathsToRecycle.length}개 항목을 휴지통으로 보낼까요?` : `Move ${pathsToRecycle.length} selected item(s) to the Recycle Bin?`), lang);
     if (!confirmed) return;
     setBusy(true);
     try {
@@ -594,10 +659,11 @@ export default function App() {
       return;
     }
     const requestTotal = requestCount(plan.actions.length);
-    const confirmed = confirm(
+    const confirmed = await confirmBox(
       lang === 'ko'
         ? `${selectedProvider.displayName} (${selectedProvider.model})로 ${plan.actions.length}개 파일의 메타데이터를 ${requestTotal}회 요청합니다. 파일 내용과 전체 경로는 보내지 않습니다. 계속할까요?`
         : `Send metadata for ${plan.actions.length} files to ${selectedProvider.displayName} (${selectedProvider.model}) in ${requestTotal} request(s)? File contents and full paths are never sent.`,
+      lang,
     );
     if (!confirmed) return;
     const files = plan.actions.map((action, id) => {
@@ -731,6 +797,8 @@ export default function App() {
   }
 
   async function checkForUpdate(manual: boolean) {
+    // The tablet gets new versions as an APK from GitHub Actions.
+    if (IS_ANDROID) return;
     if (manual) {
       setBusy(true);
       setNotice(t.updateLoading);
@@ -791,6 +859,7 @@ export default function App() {
   useEffect(() => {
     void refreshAiProviders();
     void invoke<KnownFolder[]>('known_folders').then(setKnownFolders).catch(() => undefined);
+    if (IS_ANDROID) checkStorageAccess();
     void invoke<string | null>('startup_path')
       .then((initialPath) => {
         if (shouldUseStartupPath(initialPath)) {
@@ -876,6 +945,17 @@ export default function App() {
       cancelled = true;
       stop?.();
     };
+  }, []);
+
+  // MainActivity fires this when the app returns, e.g. from the permission screen.
+  useEffect(() => {
+    if (!IS_ANDROID) return;
+    const onResume = () => {
+      checkStorageAccess();
+      void invoke<KnownFolder[]>('known_folders').then(setKnownFolders).catch(() => undefined);
+    };
+    window.addEventListener('filemoa-resume', onResume);
+    return () => window.removeEventListener('filemoa-resume', onResume);
   }, []);
 
   useEffect(() => {
@@ -964,7 +1044,7 @@ export default function App() {
           <Settings size={20} />{pendingUpdate && <span className="update-dot" />}
         </button>
         {settings && <div className="settings-menu">
-          <button onClick={() => void checkForUpdate(true)} disabled={busy}><RefreshCw size={15} /> {t.update}</button>
+          {!IS_ANDROID && <button onClick={() => void checkForUpdate(true)} disabled={busy}><RefreshCw size={15} /> {t.update}</button>}
           <button onClick={() => setLang((value) => value === 'ko' ? 'en' : 'ko')}><span className="menu-language">A/가</span> {t.language}</button>
         </div>}
       </header>
@@ -975,6 +1055,12 @@ export default function App() {
           return <button className={tab === item ? 'active' : ''} onClick={() => selectTab(item)} key={item} aria-current={tab === item ? 'page' : undefined}><TabIcon size={17} aria-hidden="true" />{t[item]}</button>;
         })}
       </nav>
+
+      {needsAccess && <div className="permission-card" role="alert">
+        <KeyRound size={26} aria-hidden="true" />
+        <div><b>{t.permTitle}</b><p>{t.permBody}</p></div>
+        <button className="primary-action" onClick={() => androidBridge()?.openAllFilesAccessSettings()}>{t.permButton}</button>
+      </div>}
 
       <section className="ribbon">
         <div className="ribbon-main">
@@ -999,7 +1085,7 @@ export default function App() {
           <span className="quick-folders-label">{t.quickFolders}</span>
           {knownFolders.map((folder) => <button className="quick-folder" key={folder.id} onClick={() => chooseKnownFolder(folder)} disabled={busy} title={folder.path}>{(() => { const FolderIcon = FOLDER_ICONS[folder.id] ?? FolderOpen; return <FolderIcon size={15} aria-hidden="true" />; })()}{knownFolderLabel(folder.id)}</button>)}
         </div>}
-        <code className="ribbon-path" title={path || t.empty}>{path || t.empty}</code>
+        <code className="ribbon-path" title={path || t.empty}>{paths.length ? paths.map(shown).join(' · ') : path || t.empty}</code>
       </section>
 
       {progress && <ProgressBar progress={progress} lang={lang} onCancel={() => void cancelOperation()} />}
@@ -1009,9 +1095,13 @@ export default function App() {
         {panel === 'plan' && <>
           <div className="manage-head"><ListChecks size={20} aria-hidden="true" /><h2>{t.plan}</h2></div>
           {plan ? <>
-            <p>{planSummary({ files: total, exclusions: plan.exclusions.length, errors: plan.errors.length, warnings: plan.warnings?.length ?? 0 }, lang)}{pendingCount > 0 && <strong className="selection-count"> · {lang === 'ko' ? `이동 선택 ${selectedCount}/${pendingCount}개` : `${selectedCount}/${pendingCount} selected to move`}</strong>}</p>
+            <p>{planSummary({ files: total, exclusions: plan.exclusions.length, errors: plan.errors.length, warnings: plan.warnings?.length ?? 0 }, lang)}{pendingCount > 0 && <strong className="selection-count"> · {lang === 'ko' ? `이동 선택 ${selectedCount}/${pendingCount}개` : `${selectedCount}/${pendingCount} selected to move`}</strong>}<br /><span className="muted">{lang === 'ko' ? '기준 폴더' : 'Folder'}: {planRoots.map(shown).join(' · ')}</span></p>
             {plan.warnings && plan.warnings.length > 0 && <details className="plan-details warning-details" open><summary>{t.warnings} ({plan.warnings.length})</summary>{plan.warnings.map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}</details>}
-            <div className="table"><div className="row row-select table-heading"><span className="row-check">{pendingCount > 0 && <input type="checkbox" aria-label={lang === 'ko' ? '이동할 항목 전체 선택' : 'Select all moves'} checked={selectedCount === pendingCount} ref={(element) => { if (element) element.indeterminate = selectedCount > 0 && selectedCount < pendingCount; }} onChange={toggleAllRows} />}</span><b>{t.category}</b><span>{lang === 'ko' ? '현재 위치' : 'Current path'}</span><span>{lang === 'ko' ? '이동 위치' : 'Destination'}</span><small>{t.status}</small></div>{plan.actions.map((action, index) => <div className={`row row-select ${action.status !== 'proposed' ? `action-${action.status}` : unchecked.has(index) ? 'row-unchecked' : ''}`} key={`${action.sourcePath}-${index}`}><span className="row-check">{action.status === 'proposed' && <input type="checkbox" aria-label={lang === 'ko' ? `${basename(action.sourcePath)} 이동` : `Move ${basename(action.sourcePath)}`} checked={!unchecked.has(index)} onChange={() => toggleRow(index)} />}</span><b>{action.category}</b><span title={action.sourcePath}>{action.sourcePath}</span><span title={action.destinationPath}>→ {action.destinationPath}{action.collision && <em className="collision-badge">{t.collision}</em>}</span><small>{action.reason} · {action.status === 'proposed' ? (lang === 'ko' ? '이동 예정' : 'Pending') : action.status}</small></div>)}</div>
+            <div className="table"><div className="row row-select table-heading"><span className="row-check">{pendingCount > 0 && <input type="checkbox" aria-label={lang === 'ko' ? '이동할 항목 전체 선택' : 'Select all moves'} checked={selectedCount === pendingCount} ref={(element) => { if (element) element.indeterminate = selectedCount > 0 && selectedCount < pendingCount; }} onChange={toggleAllRows} />}</span><b>{t.category}</b><span>{lang === 'ko' ? '현재 위치' : 'Current path'}</span><span>{lang === 'ko' ? '이동 위치' : 'Destination'}</span><small>{t.status}</small></div>{plan.actions.map((action, index) => <div className={`row row-select ${action.status !== 'proposed' ? `action-${action.status}` : unchecked.has(index) ? 'row-unchecked' : ''}`} key={`${action.sourcePath}-${index}`}><span className="row-check">{action.status === 'proposed' && <input type="checkbox" aria-label={lang === 'ko' ? `${basename(action.sourcePath)} 이동` : `Move ${basename(action.sourcePath)}`} checked={!unchecked.has(index)} onChange={() => toggleRow(index)} />}</span><b>{action.category}</b><span title={action.sourcePath}>{inPlan(action.sourcePath)}</span><span title={action.destinationPath}>→ {inPlan(action.destinationPath)}{action.collision && <em className="collision-badge">{t.collision}</em>}</span><small>{action.reason} · {action.status === 'proposed' ? (lang === 'ko' ? '이동 예정' : 'Pending') : action.status}</small></div>)}</div>
+            {pendingCount > 0 && <div className="sticky-actions">
+              <span className="selection-count">{lang === 'ko' ? `이동 선택 ${selectedCount}/${pendingCount}개` : `${selectedCount}/${pendingCount} selected`}</span>
+              <button className="primary-action" onClick={() => void execute()} disabled={busy || !plan.planId || !selectedCount}><Play size={18} /> {t.execute}</button>
+            </div>}
             {plan.exclusions.length > 0 && <details className="plan-details"><summary>{lang === 'ko' ? '제외된 항목' : 'Excluded items'} ({plan.exclusions.length})</summary>{plan.exclusions.map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}</details>}
             {plan.errors.length > 0 && <details className="plan-details error-details" open><summary>{t.errors} ({plan.errors.length})</summary>{plan.errors.map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}</details>}
           </> : <Empty text={t.nothing} />}
@@ -1050,7 +1140,7 @@ export default function App() {
               {keepCriterion === 'folder' && <label className="keep-field">{lang === 'ko' ? '폴더' : 'Folder'}
                 <select value={keepFolder} onChange={(event) => { setKeepFolder(event.target.value); setKeepApplied(false); }}>
                   <option value="">{lang === 'ko' ? '폴더 선택…' : 'Choose a folder…'}</option>
-                  {keepFolders.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
+                  {keepFolders.map((folder) => <option key={folder} value={folder}>{shown(folder)}</option>)}
                 </select>
               </label>}
               <button className="secondary-action" onClick={applyKeepCriterion} disabled={busy || keepNeedsFolder}>{lang === 'ko' ? '선택 적용' : 'Apply'}</button>
@@ -1058,7 +1148,9 @@ export default function App() {
               <span className="keep-spacer" />
               <button className="secondary-action danger-action" onClick={() => void recycleSelected(duplicateSelection)} disabled={busy || !duplicateSelection.length}><Trash2 size={15} /> {t.recycle} ({duplicateSelection.length})</button>
             </div>
-            <div className="keep-note">{lang === 'ko' ? '각 그룹의 파일 1개는 항상 남습니다 · 휴지통으로 보낸 파일은 Windows 휴지통에서 복원할 수 있습니다' : 'One file of each group always stays · Files sent to the Recycle Bin can be restored from Windows'}</div>
+            <div className="keep-note">{IS_ANDROID
+              ? (lang === 'ko' ? '각 그룹의 파일 1개는 항상 남습니다 · 보낸 파일은 내장 저장소의 FileMoa_휴지통 폴더에서 되살리거나 완전히 지울 수 있습니다' : 'One file of each group always stays · Removed files wait in the FileMoa_휴지통 folder, where you can restore or delete them')
+              : (lang === 'ko' ? '각 그룹의 파일 1개는 항상 남습니다 · 휴지통으로 보낸 파일은 Windows 휴지통에서 복원할 수 있습니다' : 'One file of each group always stays · Files sent to the Recycle Bin can be restored from Windows')}</div>
             {duplicates.map((group, index) => {
               const files = groupFiles(group);
               const choice = keepApplied && !keepNeedsFolder ? chooseKeeper(files, keepCriterion, keepFolder) : null;
@@ -1069,7 +1161,7 @@ export default function App() {
                   const dir = dirname(file.path);
                   return <label className={`keep-row ${remove ? 'remove' : 'keep'}`} key={file.path}>
                     <input type="checkbox" checked={remove} onChange={() => setDuplicateSelection((previous) => previous.includes(file.path) ? previous.filter((item) => item !== file.path) : [...previous, file.path])} />
-                    <span className="keep-path" title={file.path}><span className="keep-dir">{dir}{dir ? '\\' : ''}</span><b>{basename(file.path)}</b></span>
+                    <span className="keep-path" title={file.path}><span className="keep-dir">{shown(dir)}{dir ? separatorOf(dir) : ''}</span><b>{basename(file.path)}</b></span>
                     <span className="keep-meta">{lang === 'ko' ? '수정' : 'Modified'} {formatDay(file.modifiedSecs)} · {formatBytes(group.sizeBytes)}</span>
                     <span className={`keep-badge ${remove ? 'remove' : 'keep'}`}>{remove ? (lang === 'ko' ? '삭제 예정' : 'To delete') : (lang === 'ko' ? '보존' : 'Keep')}</span>
                   </label>;
@@ -1083,17 +1175,17 @@ export default function App() {
 
         {panel === 'large' && <>
           <div className="manage-head"><HardDrive size={20} aria-hidden="true" /><h2>{t.large}</h2></div><p>{t.largeHint}</p><label className="threshold-field">{t.largeThreshold}<input type="number" min="1" step="1" value={largeThresholdMb} onChange={(event) => setLargeThresholdMb(event.target.value)} /></label>
-          {scanPanel === 'large' ? <Loading text={t.scanning} /> : largeFiles.length ? <div className="card-list">{largeFiles.map((file) => <div className="card compact-card" key={file.path}><b>{formatBytes(file.sizeBytes)}</b><span>{file.path}</span></div>)}</div> : <Empty text={t.nothing} />}
+          {scanPanel === 'large' ? <Loading text={t.scanning} /> : largeFiles.length ? <div className="card-list">{largeFiles.map((file) => <div className="card compact-card" key={file.path}><b>{formatBytes(file.sizeBytes)}</b><span>{shown(file.path)}</span></div>)}</div> : <Empty text={t.nothing} />}
         </>}
 
         {panel === 'empty' && <>
           <div className="manage-head"><FolderOpen size={20} aria-hidden="true" /><h2>{t.emptyFolders}</h2></div><p>{t.emptyHint}</p>
-          {scanPanel === 'empty' ? <Loading text={t.scanning} /> : emptyFolders.length ? <><div className="card-list">{emptyFolders.map((folder) => <label className="check-row card" key={folder}><input type="checkbox" checked={cleanupSelection.includes(folder)} onChange={() => setCleanupSelection((previous) => previous.includes(folder) ? previous.filter((item) => item !== folder) : [...previous, folder])} />{folder}</label>)}</div><button className="secondary-action" onClick={() => void recycleSelected(cleanupSelection)} disabled={busy || !cleanupSelection.length}><Trash2 size={15} /> {t.recycle} ({cleanupSelection.length})</button></> : <Empty text={t.nothing} />}
+          {scanPanel === 'empty' ? <Loading text={t.scanning} /> : emptyFolders.length ? <><div className="card-list">{emptyFolders.map((folder) => <label className="check-row card" key={folder}><input type="checkbox" checked={cleanupSelection.includes(folder)} onChange={() => setCleanupSelection((previous) => previous.includes(folder) ? previous.filter((item) => item !== folder) : [...previous, folder])} />{shown(folder)}</label>)}</div><button className="secondary-action" onClick={() => void recycleSelected(cleanupSelection)} disabled={busy || !cleanupSelection.length}><Trash2 size={15} /> {t.recycle} ({cleanupSelection.length})</button></> : <Empty text={t.nothing} />}
         </>}
 
         {panel === 'history' && <>
           <div className="manage-head"><History size={20} aria-hidden="true" /><h2>{t.history}</h2></div>
-          {runs.length ? runs.map((run) => <div className="card" key={run.runId}><b>{runTitle(run)}</b><span>{run.rootPath}</span><span className="muted">{run.updatedAt ? new Date(run.updatedAt).toLocaleString() : ''} · {lang === 'ko' ? `제외 ${run.exclusionCount}개 · 오류 ${run.errorCount}개` : `${run.exclusionCount} exclusions · ${run.errorCount} errors`}</span><div className="card-actions">{run.executedCount > 0 && <button onClick={() => void openUndoPreview(run.runId)} disabled={busy}>{t.undo}</button>}<button className="danger-action" onClick={() => void removeRun(run)} disabled={busy}><Trash2 size={14} />{lang === 'ko' ? '기록 삭제' : 'Delete'}</button></div></div>) : <Empty text={t.nothing} />}
+          {runs.length ? runs.map((run) => <div className="card" key={run.runId}><b>{runTitle(run)}</b><span>{shown(run.rootPath)}</span><span className="muted">{run.updatedAt ? new Date(run.updatedAt).toLocaleString() : ''} · {lang === 'ko' ? `제외 ${run.exclusionCount}개 · 오류 ${run.errorCount}개` : `${run.exclusionCount} exclusions · ${run.errorCount} errors`}</span><div className="card-actions">{run.executedCount > 0 && <button onClick={() => void openUndoPreview(run.runId)} disabled={busy}>{t.undo}</button>}<button className="danger-action" onClick={() => void removeRun(run)} disabled={busy}><Trash2 size={14} />{lang === 'ko' ? '기록 삭제' : 'Delete'}</button></div></div>) : <Empty text={t.nothing} />}
         </>}
 
         {panel === 'ai' && <>
@@ -1105,7 +1197,10 @@ export default function App() {
             {selectedProvider.id !== 'ollama' && <label className="field-label">{t.apiKey}<input type="password" value={aiKeyDraft} onChange={(event) => setAiKeyDraft(event.target.value)} placeholder={selectedProvider.keyPresent ? '••••••••••••••••' : 'sk-…'} autoComplete="new-password" /></label>}
             <label className="field-label">{t.model}{selectedProvider.id === 'ollama' && selectedProvider.ollamaModels.length ? <select value={aiModelDraft} onChange={(event) => setAiModelDraft(event.target.value)}>{selectedProvider.ollamaModels.map((model) => <option value={model} key={model}>{model}</option>)}</select> : <><input value={aiModelDraft} onChange={(event) => setAiModelDraft(event.target.value)} placeholder={selectedProvider.model} list="ai-model-options" /><datalist id="ai-model-options">{aiModelOptions.map((model) => <option value={model} key={model} />)}</datalist></>}<small>{t.modelHint}</small>{selectedProvider.id !== 'ollama' && selectedProvider.keyPresent && <button type="button" className="secondary-action" onClick={() => void loadAiModels()} disabled={busy}>{lang === 'ko' ? '사용 가능한 모델 불러오기' : 'Load available models'}</button>}</label>
             <div className="ai-actions"><button onClick={() => void saveAiProvider()} disabled={busy || (selectedProvider.id !== 'ollama' && !aiKeyDraft && !selectedProvider.keyPresent)}><CheckCircle2 size={16} /> {t.save}</button><button onClick={() => void testAiProvider()} disabled={busy || (selectedProvider.id !== 'ollama' && !selectedProvider.keyPresent && !aiKeyDraft)}><RefreshCw size={16} /> {t.test}</button>{selectedProvider.id !== 'ollama' && selectedProvider.keyPresent && <button className="danger-action" onClick={() => void removeAiKey()} disabled={busy}><Trash2 size={16} /> {t.removeKey}</button>}</div>
-            {selectedProvider.id !== 'ollama' && <a className="registration-link" href={selectedProvider.registrationUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} /> {t.getKey}</a>}
+            {selectedProvider.id !== 'ollama' && (IS_ANDROID
+              // A link would replace the app inside its WebView; show the address to open in a browser.
+              ? <p className="registration-link"><ExternalLink size={15} /> {t.getKey}: <span className="selectable">{selectedProvider.registrationUrl}</span></p>
+              : <a className="registration-link" href={selectedProvider.registrationUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} /> {t.getKey}</a>)}
             {selectedProvider.id === 'ollama' && <p className="ollama-help"><Clock3 size={15} /> {selectedProvider.ollamaModels.length ? `${t.ollamaModels}: ${selectedProvider.ollamaModels.join(', ')}` : t.ollamaMissing}</p>}
             {aiMessage && <p className="inline-message">{aiMessage}</p>}
           </div>}
@@ -1121,7 +1216,26 @@ export default function App() {
         </>}
       </section>
 
-      {undoPreview && <div className="modal-backdrop" role="presentation"><div className="update-modal undo-modal" role="dialog" aria-modal="true" aria-labelledby="undo-title"><button className="modal-close" onClick={() => setUndoPreview(null)} disabled={busy} aria-label={t.cancel}><X size={18} /></button><Undo2 size={30} className="modal-icon" /><h2 id="undo-title">{t.undoPreview}</h2><p>{lang === 'ko' ? '실행된 파일만 원래 위치로 복원합니다. 원래 위치에 새 파일이 있으면 덮어쓰지 않고 충돌로 기록합니다.' : 'Only files from this run are restored. A newer file at the original path is never overwritten and is reported as a conflict.'}</p><div className="undo-toolbar"><label className="undo-all"><input type="checkbox" checked={undoRows.size === undoableRows(undoPreview).length} ref={(element) => { if (element) element.indeterminate = undoRows.size > 0 && undoRows.size < undoableRows(undoPreview).length; }} onChange={() => setUndoRows(undoRows.size === undoableRows(undoPreview).length ? new Set() : new Set(undoableRows(undoPreview)))} />{lang === 'ko' ? '전체 선택' : 'Select all'}</label><strong>{lang === 'ko' ? `${undoRows.size}/${undoableRows(undoPreview).length}개 선택` : `${undoRows.size}/${undoableRows(undoPreview).length} selected`}</strong></div><div className="release-notes undo-list">{undoableRows(undoPreview).map((row) => { const action = undoPreview.actions[row]; return <label className="undo-row" key={`${action.sourcePath}-${row}`}><input type="checkbox" checked={undoRows.has(row)} onChange={() => setUndoRows((previous) => { const next = new Set(previous); if (next.has(row)) next.delete(row); else next.add(row); return next; })} /><span title={`${action.destinationPath} → ${action.sourcePath}`}>{basename(action.sourcePath)}<small>{action.destinationPath} → {action.sourcePath}</small></span></label>; })}</div><div className="modal-actions"><button className="primary-action" onClick={() => void undo(undoPreview)} disabled={busy || undoRows.size === 0}><Undo2 size={16} /> {lang === 'ko' ? `선택한 ${undoRows.size}개 되돌리기` : `Undo ${undoRows.size} selected`}</button><button className="secondary-action" onClick={() => setUndoPreview(null)} disabled={busy}><X size={16} /> {t.cancel}</button></div></div></div>}
+      {browser && <div className="modal-backdrop" role="presentation"><div className="update-modal folder-browser" role="dialog" aria-modal="true" aria-labelledby="browser-title">
+        <button className="modal-close" onClick={() => setBrowser(null)} aria-label={t.close}><X size={22} /></button>
+        <h2 id="browser-title">{t.browseTitle}</h2>
+        <div className="browser-path">
+          <button className="secondary-action" onClick={() => browser.parent && void browse(browser.parent)} disabled={!browser.parent}><CornerLeftUp size={18} /> {t.browseUp}</button>
+          <code>{shown(browser.path)}</code>
+        </div>
+        <div className="browser-list">
+          {browser.folders.length ? browser.folders.map((name) => {
+            const child = `${browser.path}${separatorOf(browser.path)}${name}`;
+            return <button key={name} className="browser-folder" onClick={() => void browse(child)}><FolderOpen size={20} aria-hidden="true" /><span>{name}</span></button>;
+          }) : <p className="muted">{t.browseEmpty}</p>}
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-action" onClick={() => setBrowser(null)}><X size={16} /> {t.cancel}</button>
+          <button className="primary-action" onClick={() => pickBrowsed(browser.path)} disabled={!browser.parent}><CheckCircle2 size={16} /> {multiRoot ? t.browseAdd : t.browseHere}</button>
+        </div>
+      </div></div>}
+
+      {undoPreview && <div className="modal-backdrop" role="presentation"><div className="update-modal undo-modal" role="dialog" aria-modal="true" aria-labelledby="undo-title"><button className="modal-close" onClick={() => setUndoPreview(null)} disabled={busy} aria-label={t.cancel}><X size={18} /></button><Undo2 size={30} className="modal-icon" /><h2 id="undo-title">{t.undoPreview}</h2><p>{lang === 'ko' ? '실행된 파일만 원래 위치로 복원합니다. 원래 위치에 새 파일이 있으면 덮어쓰지 않고 충돌로 기록합니다.' : 'Only files from this run are restored. A newer file at the original path is never overwritten and is reported as a conflict.'}</p><div className="undo-toolbar"><label className="undo-all"><input type="checkbox" checked={undoRows.size === undoableRows(undoPreview).length} ref={(element) => { if (element) element.indeterminate = undoRows.size > 0 && undoRows.size < undoableRows(undoPreview).length; }} onChange={() => setUndoRows(undoRows.size === undoableRows(undoPreview).length ? new Set() : new Set(undoableRows(undoPreview)))} />{lang === 'ko' ? '전체 선택' : 'Select all'}</label><strong>{lang === 'ko' ? `${undoRows.size}/${undoableRows(undoPreview).length}개 선택` : `${undoRows.size}/${undoableRows(undoPreview).length} selected`}</strong></div><div className="release-notes undo-list">{undoableRows(undoPreview).map((row) => { const action = undoPreview.actions[row]; return <label className="undo-row" key={`${action.sourcePath}-${row}`}><input type="checkbox" checked={undoRows.has(row)} onChange={() => setUndoRows((previous) => { const next = new Set(previous); if (next.has(row)) next.delete(row); else next.add(row); return next; })} /><span title={`${action.destinationPath} → ${action.sourcePath}`}>{basename(action.sourcePath)}<small>{shown(action.destinationPath)} → {shown(action.sourcePath)}</small></span></label>; })}</div><div className="modal-actions"><button className="primary-action" onClick={() => void undo(undoPreview)} disabled={busy || undoRows.size === 0}><Undo2 size={16} /> {lang === 'ko' ? `선택한 ${undoRows.size}개 되돌리기` : `Undo ${undoRows.size} selected`}</button><button className="secondary-action" onClick={() => setUndoPreview(null)} disabled={busy}><X size={16} /> {t.cancel}</button></div></div></div>}
 
       {updateModal && updateDialogState !== 'idle' && <div className="modal-backdrop" role="presentation"><div className="update-modal" role="dialog" aria-modal="true" aria-labelledby="update-title"><button className="modal-close" onClick={dismissUpdateModal} disabled={busy} aria-label={t.close}><X size={18} /></button><Download size={30} className="modal-icon" /><h2 id="update-title">{t.updateTitle}</h2>
         {updateDialogState === 'loading' && <div className="update-state update-state-loading"><RefreshCw size={20} className="spin" /><p>{t.updateLoading}</p></div>}
@@ -1144,7 +1258,7 @@ function undoableRows(run: Plan): number[] {
 
 const TAB_ICONS: Record<Tab, LucideIcon> = { organize: FolderTree, manage: SlidersHorizontal, safety: ShieldCheck };
 
-/** One icon per Windows known folder; anything unknown keeps the generic folder. */
+/** One icon per known folder (Windows or Galaxy Tab); anything unknown keeps the generic folder. */
 const FOLDER_ICONS: Record<string, LucideIcon> = {
   desktop: Monitor,
   downloads: Download,
@@ -1152,6 +1266,8 @@ const FOLDER_ICONS: Record<string, LucideIcon> = {
   pictures: ImageIcon,
   videos: Film,
   music: Music,
+  camera: Camera,
+  screenshots: Tablet,
 };
 
 /** A checkbox shown as an icon chip. The real input stays in the page (visually hidden), so keyboard and screen readers work as before. */

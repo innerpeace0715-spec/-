@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { basename, chooseKeeper, selectForRecycle, nameComplexity, cloudOnlyNotice, decideOpenFolder, duplicateGroupTitle, planSummary, formatBytes, isCancelledError, progressPercent, providerStatus, requestCount, runTitle, shouldOpenUpdateModal, shouldUseStartupPath } from './utils';
+import { basename, chooseKeeper, selectForRecycle, nameComplexity, cloudOnlyNotice, decideOpenFolder, duplicateGroupTitle, planSummary, formatBytes, isCancelledError, progressPercent, providerStatus, requestCount, runTitle, shouldOpenUpdateModal, shouldUseStartupPath, friendlyPath, separatorOf, underRoot } from './utils';
 
 describe('FileMoa UI utilities', () => {
   it('formats byte counts for the large-file view', () => {
@@ -112,5 +112,34 @@ describe('FileMoa UI utilities', () => {
     const { paths, tieGroups } = selectForRecycle([g1, g2], 'oldest');
     expect(paths).toEqual(['a2', 'a3', 'b2']);
     expect(tieGroups).toEqual([1]);
+  });
+});
+
+describe('Galaxy Tab paths', () => {
+  it('names shared storage the way the Files app does', () => {
+    expect(friendlyPath('/storage/emulated/0', 'ko')).toBe('내장 저장소');
+    expect(friendlyPath('/storage/emulated/0/Download/a.pdf', 'ko')).toBe('내장 저장소/Download/a.pdf');
+    expect(friendlyPath('/sdcard/DCIM', 'en')).toBe('Internal storage/DCIM');
+    expect(friendlyPath('/storage/emulated/01/x', 'ko')).toBe('/storage/emulated/01/x');
+    expect(friendlyPath('C:\\Users\\a\\Downloads', 'ko')).toBe('C:\\Users\\a\\Downloads');
+  });
+
+  it('keeps the separator a path already uses', () => {
+    expect(separatorOf('/storage/emulated/0/Download')).toBe('/');
+    expect(separatorOf('C:\\Users\\a')).toBe('\\');
+  });
+});
+
+describe('preview paths', () => {
+  it('drops the folder being organised from each row', () => {
+    const root = '/storage/emulated/0/Download';
+    expect(underRoot(`${root}/사진/a.jpg`, [root])).toBe('사진/a.jpg');
+    expect(underRoot('C:\\Users\\a\\Downloads\\x.pdf', ['C:\\Users\\a\\Downloads'])).toBe('x.pdf');
+    expect(underRoot('/storage/emulated/0/Downloads2/a.jpg', [root])).toBeNull();
+  });
+
+  it('keeps the root name when several folders are organised together', () => {
+    const roots = ['/storage/emulated/0/Download', '/storage/emulated/0/DCIM/Camera'];
+    expect(underRoot('/storage/emulated/0/DCIM/Camera/사진/b.jpg', roots)).toBe('Camera/사진/b.jpg');
   });
 });

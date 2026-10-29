@@ -169,3 +169,39 @@ export function formatDay(secs: number): string {
   const two = (value: number) => String(value).padStart(2, '0');
   return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
 }
+
+const ANDROID_STORAGE = '/storage/emulated/0';
+
+/**
+ * A path as the Galaxy Tab's Files app names it: "내장 저장소/Download"
+ * instead of "/storage/emulated/0/Download". Other paths are unchanged.
+ */
+export function friendlyPath(path: string, language: Language): string {
+  const label = language === 'ko' ? '내장 저장소' : 'Internal storage';
+  for (const root of [ANDROID_STORAGE, '/sdcard']) {
+    if (path === root) return label;
+    if (path.startsWith(`${root}/`)) return `${label}/${path.slice(root.length + 1)}`;
+  }
+  return path;
+}
+
+/** The separator a path already uses, for joining a folder and a name back together. */
+export function separatorOf(path: string): '/' | '\\' {
+  return path.includes('\\') ? '\\' : '/';
+}
+
+/**
+ * `path` relative to the folder being organised, so a preview row shows
+ * "사진/IMG_0001.jpg" instead of repeating the same long prefix. With several
+ * roots the root's own name is kept in front. Null when outside every root.
+ */
+export function underRoot(path: string, roots: string[]): string | null {
+  for (const root of roots) {
+    const separator = separatorOf(root);
+    const prefix = root.endsWith(separator) ? root : `${root}${separator}`;
+    if (!path.startsWith(prefix)) continue;
+    const rest = path.slice(prefix.length);
+    return roots.length > 1 ? `${basename(root)}${separator}${rest}` : rest;
+  }
+  return null;
+}

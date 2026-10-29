@@ -1,0 +1,106 @@
+name: Galaxy Tab APK
+
+# Every push checks the code and builds an APK for the Galaxy Tab S9+
+# (arm64). The APK is attached to the run as the "FileMoa-GalaxyTab" artifact.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      # Tauri's desktop build on Linux, used here only to run the Rust tests.
+      - name: Install WebKitGTK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
+      - run: npm ci
+      - name: Frontend tests
+        run: npm test -- --run
+      - name: Frontend type check and build
+        run: npm run build
+      - name: Rust format
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Rust lints
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib --tests -- -D warnings
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+  apk:
+    needs: check
+    runs-on: ubuntu-24.04
+    env:
+      NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - name: Install the Android NDK
+        run: |
+          sdkmanager --install "ndk;${NDK_VERSION}"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      # Android only installs an update over an app signed with the same key.
+      # With the ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD secrets
+      # every build can be installed over the last one; without them a
+      # throwaway key is made and the old app must be uninstalled first.
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          cd src-tauri/gen/android
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > release.jks
+            password="$KEYSTORE_PASSWORD"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: signing with a one-off key. Uninstall the old FileMoa before installing this APK."
+            password="$(openssl rand -hex 16)"
+            keytool -genkeypair -keystore release.jks -alias filemoa -keyalg RSA -keysize 2048 \
+              -validity 10000 -storepass "$password" -keypass "$password" -dname "CN=FileMoa"
+          fi
+          printf 'storeFile=release.jks\npassword=%s\nkeyAlias=filemoa\n' "$password" > keystore.properties
+      - name: Build the APK
+        run: npx tauri android build --apk --target aarch64
+      - name: Name the APK
+        run: |
+          version=$(node -p "require('./package.json').version")
+          apk=$(find src-tauri/gen/android/app/build/outputs/apk -name '*-release.apk' | head -n1)
+          test -n "$apk"
+          mkdir -p out
+          cp "$apk" "out/FileMoa-GalaxyTab-${version}.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FileMoa-GalaxyTab
+          path: out/*.apk
+          if-no-files-found: error

@@ -354,6 +354,51 @@ fn path_is_under(path: &Path, parent: &Path) -> bool {
     path == parent || path.starts_with(&(parent + "\\"))
 }
 
+/// Shared storage on Android: what the Files app calls "Internal storage".
+pub const ANDROID_STORAGE: &str = "/storage/emulated/0";
+
+/// The top of a storage volume on Android (internal storage or an SD card),
+/// including the `/sdcard` aliases. Organising one of these at once would
+/// sweep every app's media folders together.
+pub fn is_storage_root(path: &Path) -> bool {
+    let key = path_key(path);
+    let parts: Vec<&str> = key.split('\\').filter(|part| !part.is_empty()).collect();
+    match parts.as_slice() {
+        ["sdcard"] | ["storage"] | ["storage", "emulated"] | ["storage", "self"] => true,
+        ["storage", "self", "primary"] => true,
+        ["storage", "emulated", user] => user.chars().all(|c| c.is_ascii_digit()),
+        // An SD card or USB drive: /storage/1234-ABCD
+        ["storage", volume] => volume.len() == 9 && volume.as_bytes()[4] == b'-',
+        _ => false,
+    }
+}
+
+/// Android system and app-private locations: `Android/data`, `Android/obb`
+/// and the rest of the per-volume `Android` folder, the FileMoa trash, and
+/// the system partitions.
+fn android_protected(key: &str) -> bool {
+    let parts: Vec<&str> = key.split('\\').filter(|part| !part.is_empty()).collect();
+    match parts.as_slice() {
+        ["data" | "system" | "vendor" | "product" | "apex" | "proc" | "dev", ..] => true,
+        ["storage", "emulated", _, rest @ ..] | ["sdcard", rest @ ..] => rest
+            .first()
+            .is_some_and(|first| *first == "android" || *first == TRASH_KEY),
+        ["storage", "self", "primary", rest @ ..] => rest
+            .first()
+            .is_some_and(|first| *first == "android" || *first == TRASH_KEY),
+        ["storage", _, rest @ ..] => rest
+            .first()
+            .is_some_and(|first| *first == "android" || *first == TRASH_KEY),
+        _ => false,
+    }
+}
+
+/// Folder at the top of each Android volume that "Recycle Bin" moves go to.
+#[cfg_attr(windows, allow(dead_code))]
+pub const TRASH_FOLDER: &str = "FileMoa_휴지통";
+/// `TRASH_FOLDER` as `path_key` spells it.
+const TRASH_KEY: &str = "filemoa_휴지통";
+
 /// Resolve 8.3 short names (`PROGRA~1`), junctions and symlinks so a protected
 /// folder cannot be reached under another spelling. Falls back to the input
 /// when the path does not exist.
@@ -411,9 +456,11 @@ fn protected_spelling(path: &Path) -> bool {
     let environment = protected_environment_dirs()
         .iter()
         .any(|dir| path_is_under(path, dir));
+    let android = cfg!(target_os = "android") && android_protected(&key);
     system_root
         || program_root
         || environment
+        || android
         || component_match(".git")
         || component_match("node_modules")
 }
@@ -458,6 +505,9 @@ pub(crate) fn root_rejection(root: &Path) -> Option<&'static str> {
     for path in [root, real.as_path()] {
         if path.parent().is_none() {
             return Some("드라이브 루트는 정리할 수 없습니다. 하위 폴더를 선택하세요. / A drive root cannot be organised; pick a folder inside it.");
+        }
+        if cfg!(target_os = "android") && is_storage_root(path) {
+            return Some("내장 저장소(또는 SD 카드) 전체는 정리할 수 없습니다. Download·DCIM 같은 하위 폴더를 선택하세요. / The whole storage cannot be organised; pick a folder inside it.");
         }
         if let Some(profile) = std::env::var_os("USERPROFILE") {
             let profile = resolved(Path::new(&profile));
@@ -574,7 +624,7 @@ pub(crate) fn root_for_source(plan: &OrganizationPlan, source: &Path) -> PathBuf
 }
 
 fn category_root(root: &Path, category: &str) -> PathBuf {
-    root.join(category.replace('/', "\\"))
+    root.join(category.replace('/', std::path::MAIN_SEPARATOR_STR))
 }
 
 fn safe_destination(dest: PathBuf) -> (PathBuf, bool) {
@@ -1286,17 +1336,27 @@ fn move_no_replace(from: &Path, to: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Android's shared storage (FUSE/sdcardfs) refuses hard links and the
+/// no-replace rename flag, so check for the destination and rename. The gap
+/// between the two is a single system call wide.
 #[cfg(not(windows))]
-fn move_no_replace(from: &Path, to: &Path) -> io::Result<()> {
-    // hard_link refuses to replace an existing destination.
-    fs::hard_link(from, to)?;
-    fs::remove_file(from)
+pub(crate) fn move_no_replace(from: &Path, to: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(to).is_ok() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "destination exists",
+        ));
+    }
+    fs::rename(from, to)
 }
 
 /// Move without overwriting, picking the next free `name (n).ext` when the
 /// destination turns out to be taken. Returns the final path and whether a
 /// rename was needed.
-fn move_with_unique_name(from: &Path, destination: PathBuf) -> io::Result<(PathBuf, bool)> {
+pub(crate) fn move_with_unique_name(
+    from: &Path,
+    destination: PathBuf,
+) -> io::Result<(PathBuf, bool)> {
     let mut destination = destination;
     let mut renamed = false;
     for _ in 0..100 {
@@ -1807,6 +1867,7 @@ pub fn find_duplicates_ctl(
 }
 
 #[cfg(test)]
+#[cfg_attr(not(windows), allow(dead_code))] // only the Windows cloud-file test uses it
 pub fn find_large_files(
     root: &str,
     sub: bool,
@@ -2290,6 +2351,8 @@ mod tests {
         assert!(!root.join("Docs").exists());
     }
 
+    // Windows drive-letter paths only mean something on Windows.
+    #[cfg(windows)]
     #[test]
     fn drive_roots_profile_and_system_folders_cannot_be_organised() {
         assert!(root_rejection(Path::new("C:\\")).is_some());
@@ -2310,6 +2373,8 @@ mod tests {
         }
     }
 
+    // Windows drive-letter paths only mean something on Windows.
+    #[cfg(windows)]
     #[test]
     fn data_drive_folders_named_like_system_folders_are_allowed() {
         // `Recovery` is only special on the Windows drive.
@@ -2744,6 +2809,8 @@ mod tests {
             .any(|warning| warning.contains("접근")));
     }
 
+    // Windows drive-letter paths only mean something on Windows.
+    #[cfg(windows)]
     #[test]
     fn cloud_sync_folders_are_recognised_by_name() {
         for yes in [
@@ -2894,5 +2961,49 @@ mod tests {
             root.join("Docs").join("a.txt").is_file(),
             "nothing moved on the error"
         );
+    }
+
+    #[test]
+    fn android_storage_roots_are_recognised() {
+        for root in [
+            "/storage/emulated/0",
+            "/storage/emulated/0/",
+            "/storage/emulated",
+            "/sdcard",
+            "/storage/self/primary",
+            "/storage/1A2B-3C4D",
+        ] {
+            assert!(is_storage_root(Path::new(root)), "{root}");
+        }
+        for folder in [
+            "/storage/emulated/0/Download",
+            "/storage/emulated/0/DCIM/Camera",
+            "/storage/1A2B-3C4D/Music",
+        ] {
+            assert!(!is_storage_root(Path::new(folder)), "{folder}");
+        }
+    }
+
+    #[test]
+    fn android_system_and_app_folders_are_protected() {
+        let key = |path: &str| path_key(Path::new(path));
+        for path in [
+            "/storage/emulated/0/Android",
+            "/storage/emulated/0/Android/data/com.kakao.talk",
+            "/sdcard/Android/obb",
+            "/storage/1A2B-3C4D/Android/data",
+            "/storage/emulated/0/FileMoa_휴지통/2026-10-29",
+            "/data/user/0/com.cybereun.filemoa",
+            "/system/app",
+        ] {
+            assert!(android_protected(&key(path)), "{path}");
+        }
+        for path in [
+            "/storage/emulated/0/Download",
+            "/storage/emulated/0/Documents/Android 개발 노트",
+            "/storage/emulated/0/DCIM/Camera",
+        ] {
+            assert!(!android_protected(&key(path)), "{path}");
+        }
     }
 }

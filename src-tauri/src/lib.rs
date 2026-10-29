@@ -12,7 +12,9 @@ use progress::{Ctl, Operations, Progress};
 use scan_store::ScanStore;
 use serde::Serialize;
 use std::path::PathBuf;
-use tauri::{ipc::Channel, AppHandle, Emitter, Manager};
+#[cfg(desktop)]
+use tauri::Emitter;
+use tauri::{ipc::Channel, AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +23,7 @@ struct KnownFolder {
     path: String,
 }
 
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
 fn known_folders(app: AppHandle) -> Vec<KnownFolder> {
     let locations = [
@@ -41,6 +44,88 @@ fn known_folders(app: AppHandle) -> Vec<KnownFolder> {
             })
         })
         .collect()
+}
+
+/// Shared-storage folders a Galaxy Tab fills by itself. The path API would
+/// answer with app-private folders here, so the public ones are named directly.
+#[cfg(target_os = "android")]
+#[tauri::command]
+fn known_folders(_app: AppHandle) -> Vec<KnownFolder> {
+    let root = std::path::Path::new(planner::ANDROID_STORAGE);
+    [
+        ("downloads", "Download"),
+        ("camera", "DCIM/Camera"),
+        ("screenshots", "DCIM/Screenshots"),
+        ("screenshots", "Pictures/Screenshots"),
+        ("pictures", "Pictures"),
+        ("documents", "Documents"),
+        ("videos", "Movies"),
+        ("music", "Music"),
+    ]
+    .into_iter()
+    .filter_map(|(id, relative)| {
+        let path = root.join(relative);
+        path.is_dir().then(|| KnownFolder {
+            id: id.into(),
+            path: path.display().to_string(),
+        })
+    })
+    .fold(Vec::new(), |mut found, folder| {
+        // One Screenshots entry: One UI keeps them in DCIM, older versions in Pictures.
+        if !found
+            .iter()
+            .any(|known: &KnownFolder| known.id == folder.id)
+        {
+            found.push(folder);
+        }
+        found
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FolderListing {
+    path: String,
+    parent: Option<String>,
+    folders: Vec<String>,
+}
+
+/// The sub-folders of `path` for the in-app folder browser. Android has no
+/// system folder picker that returns a real path, so the app browses itself.
+/// Without a path it starts at the shared storage (or the home folder).
+#[tauri::command]
+fn list_folders(app: AppHandle, path: Option<String>) -> Result<FolderListing, String> {
+    let start = match path {
+        Some(path) if !path.is_empty() => PathBuf::from(path),
+        _ if cfg!(target_os = "android") => PathBuf::from(planner::ANDROID_STORAGE),
+        _ => app
+            .path()
+            .home_dir()
+            .map_err(|e| format!("홈 폴더를 찾을 수 없습니다 / home folder unavailable: {e}"))?,
+    };
+    let entries = std::fs::read_dir(&start).map_err(|error| {
+        format!(
+            "폴더를 열 수 없습니다: {} ({error}) / cannot open the folder",
+            start.display()
+        )
+    })?;
+    let mut folders: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| !name.starts_with('.'))
+        .filter(|name| !planner::is_protected_path(&start.join(name)))
+        .collect();
+    folders.sort_by_key(|name| name.to_lowercase());
+    // Stop at the top of the shared storage: above it nothing can be organised.
+    let at_top = planner::is_storage_root(&start);
+    Ok(FolderListing {
+        parent: (!at_top)
+            .then(|| start.parent().map(|parent| parent.display().to_string()))
+            .flatten(),
+        path: start.display().to_string(),
+        folders,
+    })
 }
 
 fn startup_candidate<I>(mut arguments: I) -> Result<Option<PathBuf>, String>
@@ -341,6 +426,7 @@ fn recycle_files(
 /// launch (no folder) only brings the window forward.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(not(desktop), allow(dead_code))]
 struct OpenFolderRequest {
     path: Option<String>,
     error: Option<String>,
@@ -348,6 +434,7 @@ struct OpenFolderRequest {
 
 /// Read the `--organize <folder>` a second launch was started with. The first
 /// argument is the executable itself.
+#[cfg(desktop)]
 fn folder_request(args: &[String]) -> OpenFolderRequest {
     let arguments = args.iter().skip(1).map(std::ffi::OsString::from);
     match startup_candidate(arguments) {
@@ -376,6 +463,7 @@ fn folder_request(args: &[String]) -> OpenFolderRequest {
 
 /// Logical size to open the window with: the design size, but never more than
 /// the usable part of the screen (so a laptop does not push it off-screen).
+#[cfg(desktop)]
 fn start_size(work_width: f64, work_height: f64) -> (f64, f64) {
     const DESIGN: (f64, f64) = (1200.0, 960.0);
     const MIN: (f64, f64) = (940.0, 620.0);
@@ -387,6 +475,7 @@ fn start_size(work_width: f64, work_height: f64) -> (f64, f64) {
 
 /// Shrink the window to the screen it opens on when the design size does not
 /// fit; on a large screen nothing changes.
+#[cfg(desktop)]
 fn fit_window_to_screen(window: &tauri::WebviewWindow) {
     let monitor = window
         .current_monitor()
@@ -404,10 +493,13 @@ fn fit_window_to_screen(window: &tauri::WebviewWindow) {
     let _ = window.center();
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        // Must be the first plugin. A second launch (the Explorer context menu,
-        // a shortcut) exits at once; this running window receives its folder.
+    let builder = tauri::Builder::default();
+    // Must be the first plugin. A second launch (the Explorer context menu,
+    // a shortcut) exits at once; this running window receives its folder.
+    #[cfg(desktop)]
+    let builder = builder
         .plugin(tauri_plugin_single_instance::init(
             |app, args, _working_dir| {
                 if let Some(window) = app.get_webview_window("main") {
@@ -424,15 +516,17 @@ pub fn run() {
             }
             Ok(())
         })
+        .plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         .manage(PlanStore::default())
         .manage(ScanStore::default())
         .manage(Operations::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             known_folders,
+            list_folders,
             cancel_operation,
             startup_path,
             plan_organization,

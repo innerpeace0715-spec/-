@@ -1043,6 +1043,7 @@ dependencies = [
  "tokio",
  "uuid",
  "walkdir",
+ "webpki-root-certs",
  "windows-sys 0.61.2",
 ]
 

@@ -34,6 +34,7 @@ struct Entry {
 #[derive(Default)]
 struct Inner {
     entries: HashMap<String, Entry>,
+    /// Each duplicate group's files, spelled as on disk.
     groups: HashMap<usize, Vec<String>>,
     next_group: usize,
 }
@@ -88,7 +89,9 @@ impl ScanStore {
                         modified,
                     },
                 );
-                members.push(key);
+                // Keep the real spelling: the key is lowercased with
+                // backslashes, which only names the file on Windows.
+                members.push(path.clone());
             }
             inner.groups.insert(id, members);
         }
@@ -193,8 +196,9 @@ impl ScanStore {
             let survivors = inner.groups.get(&group).map_or(0, |members| {
                 members
                     .iter()
-                    .filter(|key| {
-                        !requested_keys.contains(*key) && Path::new(key.as_str()).exists()
+                    .filter(|member| {
+                        !requested_keys.contains(&path_key(Path::new(member.as_str())))
+                            && Path::new(member.as_str()).exists()
                     })
                     .count()
             });
@@ -226,7 +230,7 @@ impl ScanStore {
             }) = inner.entries.remove(&key)
             {
                 if let Some(members) = inner.groups.get_mut(&group) {
-                    members.retain(|member| member != &key);
+                    members.retain(|member| path_key(Path::new(member)) != key);
                 }
             } else {
                 inner.entries.remove(&key);

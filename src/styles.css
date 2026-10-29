@@ -1711,3 +1711,453 @@ main {
     grid-column: 2 / -1;
   }
 }
+
+/* Galaxy Tab: "All files access" request. */
+.permission-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 16px 0 0;
+  padding: 16px 18px;
+  border: 1px solid #e4cda8;
+  border-radius: 14px;
+  background: var(--warning-soft);
+  color: #765021;
+}
+
+.permission-card > svg {
+  flex: 0 0 auto;
+}
+
+.permission-card div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.permission-card p {
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+.permission-card button {
+  flex: 0 0 auto;
+  min-height: 48px;
+  padding: 10px 18px;
+  border: 1px solid;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* "Move files" stays in reach while scrolling a long preview. */
+.sticky-actions {
+  position: sticky;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 12px 10px 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  box-shadow: 0 10px 28px rgba(83, 64, 45, 0.18);
+  backdrop-filter: blur(6px);
+}
+
+.sticky-actions button {
+  min-height: 44px;
+  padding: 10px 22px;
+  border: 1px solid;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* The duplicate toolbar stays on top of a long list of groups. */
+.keep-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  box-shadow: 0 6px 18px rgba(83, 64, 45, 0.1);
+}
+
+/* In-app folder browser (Android has no picker that returns a real path). */
+.folder-browser {
+  display: grid;
+  gap: 12px;
+  width: min(760px, 100%);
+}
+
+.folder-browser h2 {
+  margin: 0 40px 0 0;
+}
+
+.browser-path {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.browser-path button {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.browser-path code {
+  min-width: 0;
+  color: var(--muted-strong);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.browser-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 2px;
+}
+
+.browser-folder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.browser-folder svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.browser-folder span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.browser-folder:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.selectable {
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .permission-card,
+  .sticky-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* Touch screens (the Galaxy Tab S9+): larger text and finger-sized targets.
+   Sizes follow Android's 48dp touch target. */
+@media (pointer: coarse) {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    font-size: 15px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  main {
+    width: min(100%, 1440px);
+    padding: 20px 24px 40px;
+  }
+
+  .brand h1 {
+    font-size: 24px;
+  }
+
+  .brand p {
+    font-size: 14px;
+  }
+
+  .app-version {
+    font-size: 13px;
+  }
+
+  .settings {
+    min-width: 52px;
+    min-height: 52px;
+  }
+
+  .settings-menu {
+    top: 60px;
+    min-width: 240px;
+  }
+
+  .settings-menu button {
+    min-height: 52px;
+    font-size: 15px;
+  }
+
+  .tabs button {
+    flex: 1 1 0;
+    justify-content: center;
+    min-height: 56px;
+    padding: 14px 24px;
+    font-size: 16px;
+  }
+
+  .tabs button svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .ribbon {
+    padding: 18px 20px;
+  }
+
+  .ribbon-actions button {
+    min-height: 86px;
+    font-size: 15px;
+  }
+
+  .ribbon-actions button svg {
+    width: 28px;
+    height: 28px;
+  }
+
+  .ribbon-option,
+  .toggle-chip {
+    min-height: 52px;
+    padding: 10px 14px;
+    font-size: 15px;
+  }
+
+  .ribbon-option select {
+    min-height: 44px;
+    max-width: 220px;
+    font-size: 15px;
+  }
+
+  .quick-folders-label {
+    font-size: 13px;
+  }
+
+  .ribbon .quick-folder {
+    min-height: 52px;
+    padding: 12px 18px;
+    border-color: var(--line);
+    font-size: 15px;
+  }
+
+  .ribbon .quick-folder svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .ribbon-path {
+    padding: 12px 14px;
+    font-size: 14px;
+  }
+
+  .workspace {
+    padding: 24px;
+  }
+
+  .workspace > p,
+  .notice,
+  .inline-message {
+    font-size: 15px;
+  }
+
+  .muted {
+    font-size: 14px;
+  }
+
+  .row {
+    gap: 14px;
+    padding: 14px;
+    font-size: 15px;
+  }
+
+  .row small {
+    font-size: 13px;
+  }
+
+  /* Wrap long file names onto a second line instead of cutting them off. */
+  .row span {
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .row-select {
+    grid-template-columns: 36px 140px minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+
+  input[type="checkbox"],
+  .row-check input,
+  .keep-row input {
+    width: 24px;
+    height: 24px;
+  }
+
+  .card span {
+    font-size: 15px;
+  }
+
+  .card label {
+    font-size: 14px;
+  }
+
+  .form input,
+  .field-label input,
+  .field-label select,
+  .threshold-field input,
+  .manage-card .form input {
+    height: auto;
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  .form button,
+  .card button,
+  .ai-actions button,
+  .modal-actions button,
+  .keep-bar button,
+  .manage-card .form button,
+  .progress-card button {
+    height: auto;
+    min-height: 48px;
+    padding: 10px 18px;
+    font-size: 15px;
+  }
+
+  .manage-card .card button {
+    min-height: 44px;
+    padding: 8px 14px;
+    font-size: 14px;
+  }
+
+  .manage-card p,
+  .manage-card .category-card span,
+  .manage-card .category-card label {
+    font-size: 14px;
+  }
+
+  .keep-field {
+    font-size: 15px;
+  }
+
+  .keep-field select {
+    height: 48px;
+    font-size: 15px;
+  }
+
+  .keep-row {
+    grid-template-columns: 32px minmax(0, 1fr) auto 96px;
+    padding: 12px 4px;
+    font-size: 15px;
+  }
+
+  .keep-meta,
+  .keep-note {
+    font-size: 13px;
+  }
+
+  .keep-badge {
+    padding: 4px 12px;
+    font-size: 13px;
+  }
+
+  .undo-row {
+    padding: 12px 4px;
+    font-size: 15px;
+  }
+
+  .plan-details summary {
+    padding: 6px 0;
+    font-size: 15px;
+  }
+
+  .plan-details p {
+    font-size: 14px;
+  }
+
+  .progress-card progress {
+    height: 12px;
+  }
+
+  .provider-card {
+    min-height: 88px;
+  }
+
+  .provider-state,
+  .field-label small {
+    font-size: 13px;
+  }
+
+  .modal-close {
+    padding: 10px;
+  }
+
+  .update-modal {
+    width: min(760px, 100%);
+  }
+}
+
+/* Tablet held sideways: buttons on the left, options beside them, so the
+   preview starts higher on a short screen. */
+@media (pointer: coarse) and (orientation: landscape) and (min-width: 1100px) {
+  .ribbon-main {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .ribbon-actions {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+  }
+
+  .ribbon-actions button {
+    flex: 0 0 132px;
+    min-height: 76px;
+  }
+
+  .ribbon-divider {
+    display: none;
+  }
+
+  .tabs button {
+    min-height: 52px;
+  }
+
+  .ribbon-controls {
+    flex: 1 1 auto;
+    padding: 0 0 0 18px;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+}
+
+@media (pointer: coarse) and (max-width: 760px) {
+  .row-select {
+    grid-template-columns: 1fr;
+  }
+
+  .keep-row {
+    grid-template-columns: 32px minmax(0, 1fr) 96px;
+  }
+}

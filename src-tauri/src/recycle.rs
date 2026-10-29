@@ -8,9 +8,12 @@
 //! "Recycle Bin" honest this module (1) refuses drives that have no bin,
 //! (2) asks the shell to warn before any permanent delete, and (3) verifies
 //! afterwards which items are really gone and reports the rest.
+//!
+//! Android has no Recycle Bin for files reached by path, so there the items
+//! move into a `FileMoa_휴지통` folder at the top of their storage, from where
+//! the Files app can put them back or delete them for good.
 
 use serde::Serialize;
-#[cfg(windows)]
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -194,8 +197,89 @@ pub fn recycle_files(
 }
 
 #[cfg(not(windows))]
-pub fn recycle_files(_: Vec<String>, _: *mut std::ffi::c_void) -> Result<RecycleOutcome, String> {
-    Err("휴지통 연동은 Windows에서만 지원됩니다.".into())
+pub fn recycle_files(
+    paths: Vec<String>,
+    _: *mut std::ffi::c_void,
+) -> Result<RecycleOutcome, String> {
+    // One folder per run, so a batch can be found and restored together.
+    let batch = chrono::Local::now().format("%Y-%m-%d_%H%M%S").to_string();
+    move_to_trash(paths, |path| {
+        volume_root(path).map(|root| root.join(crate::planner::TRASH_FOLDER).join(&batch))
+    })
+}
+
+/// The storage volume `path` lives on: internal storage
+/// (`/storage/emulated/0`, `/sdcard`) or an SD card (`/storage/1234-ABCD`).
+/// Elsewhere there is no place for a trash folder.
+#[cfg(not(windows))]
+fn volume_root(path: &Path) -> Option<std::path::PathBuf> {
+    path.ancestors()
+        .find(|ancestor| {
+            crate::planner::is_storage_root(ancestor)
+                && !matches!(
+                    ancestor.to_str(),
+                    Some("/storage" | "/storage/emulated" | "/storage/self")
+                )
+        })
+        .map(Path::to_path_buf)
+}
+
+/// Move each item into the folder `bin_for` names for it, never replacing a
+/// file already there.
+#[cfg(any(not(windows), test))]
+fn move_to_trash(
+    paths: Vec<String>,
+    bin_for: impl Fn(&Path) -> Option<std::path::PathBuf>,
+) -> Result<RecycleOutcome, String> {
+    if paths.is_empty() {
+        return Err("휴지통으로 보낼 파일을 하나 이상 선택하세요.".into());
+    }
+    let mut recycled: Vec<String> = Vec::new();
+    let mut skipped = Vec::new();
+    for value in paths {
+        if recycled.contains(&value) {
+            continue;
+        }
+        let path = Path::new(&value);
+        let mut skip = |reason: String| {
+            skipped.push(RecycleSkip {
+                path: value.clone(),
+                reason,
+            });
+        };
+        if !path.is_absolute() {
+            skip("전체 경로가 아니어서 건너뜀 / not an absolute path".into());
+            continue;
+        }
+        if !path.is_file() && !path.is_dir() {
+            skip("항목을 찾을 수 없어 건너뜀 / not found".into());
+            continue;
+        }
+        if crate::planner::is_protected_path(path) {
+            skip("보호된 경로는 휴지통으로 보낼 수 없습니다 / protected path".into());
+            continue;
+        }
+        let (Some(bin), Some(name)) = (bin_for(path), path.file_name()) else {
+            skip(
+                "휴지통 폴더를 둘 저장소를 찾을 수 없습니다 / no trash folder for this location"
+                    .into(),
+            );
+            continue;
+        };
+        if let Err(error) = std::fs::create_dir_all(&bin) {
+            skip(format!(
+                "휴지통 폴더를 만들 수 없습니다 / cannot create the trash folder: {error}"
+            ));
+            continue;
+        }
+        match crate::planner::move_with_unique_name(path, bin.join(name)) {
+            Ok(_) => recycled.push(value),
+            Err(error) => skip(format!(
+                "휴지통으로 옮기지 못했습니다 / could not be moved to the trash: {error}"
+            )),
+        }
+    }
+    Ok(RecycleOutcome { recycled, skipped })
 }
 
 #[cfg(test)]
@@ -250,6 +334,43 @@ mod tests {
         .expect("outcome");
         assert!(outcome.recycled.is_empty());
         assert_eq!(outcome.skipped.len(), 2);
+    }
+
+    #[test]
+    fn trash_moves_files_and_folders_without_replacing() {
+        let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-tmp");
+        std::fs::create_dir_all(&base).expect("base");
+        let root = tempfile::Builder::new().tempdir_in(base).expect("dir");
+        let bin = root.path().join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        std::fs::write(bin.join("a.txt"), b"already in the bin").expect("old");
+        let file = root.path().join("a.txt");
+        let folder = root.path().join("empty");
+        std::fs::write(&file, b"new").expect("file");
+        std::fs::create_dir(&folder).expect("folder");
+        let text = |path: &Path| path.display().to_string();
+
+        let outcome = move_to_trash(
+            vec![text(&file), text(&folder), "relative.txt".into()],
+            |_| Some(bin.clone()),
+        )
+        .expect("outcome");
+        assert_eq!(outcome.recycled, vec![text(&file), text(&folder)]);
+        assert_eq!(outcome.skipped.len(), 1);
+        assert!(!file.exists() && !folder.exists());
+        assert_eq!(
+            std::fs::read(bin.join("a.txt")).unwrap(),
+            b"already in the bin"
+        );
+        assert_eq!(std::fs::read(bin.join("a (1).txt")).unwrap(), b"new");
+        assert!(bin.join("empty").is_dir());
+
+        // Without a place for the bin nothing moves.
+        std::fs::write(&file, b"again").expect("file");
+        let outcome = move_to_trash(vec![text(&file)], |_| None).expect("outcome");
+        assert!(outcome.recycled.is_empty() && file.exists());
     }
 
     /// Sends one throwaway file to the real Recycle Bin. Run on demand:
