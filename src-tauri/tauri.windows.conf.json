@@ -1,4 +1,5 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "identifier": "com.ufile.windows"
+  "identifier": "com.ufile.windows",
+  "mainBinaryName": "U-file"
 }

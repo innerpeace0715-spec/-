@@ -26,8 +26,13 @@ function Save-Screen([string] $path) {
 
 Write-Output '== install'
 Start-Process -FilePath $Installer -ArgumentList '/S' -Wait
-$exe = Get-ChildItem -Path $env:LOCALAPPDATA -Filter 'U-file.exe' -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $exe) { throw 'FAIL: U-file.exe was not installed' }
+# A current-user NSIS install goes to %LOCALAPPDATA%\U-file.
+$folder = Join-Path $env:LOCALAPPDATA 'U-file'
+$exe = Get-Item (Join-Path $folder 'U-file.exe') -ErrorAction SilentlyContinue
+if (-not $exe) {
+  Get-ChildItem $folder -ErrorAction SilentlyContinue | Format-Table Name, Length | Out-String | Write-Output
+  throw "FAIL: U-file.exe is not in $folder"
+}
 Write-Output "installed: $($exe.FullName)"
 
 # The Explorer "U-file로 정리" entry must start the installed program.
