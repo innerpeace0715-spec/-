@@ -11,6 +11,11 @@ export const IS_IOS = PLATFORM ? PLATFORM === 'ios' : /iPad|iPhone|iPod/.test(na
  * self-update, and nothing is ever sent off the device.
  */
 export const IS_MOBILE = IS_ANDROID || IS_IOS;
+/**
+ * Every U-file build (Windows too) keeps the user's files on the device: no
+ * AI providers and no self-update, so nothing ever opens a connection.
+ */
+export const LOCAL_ONLY = true;
 
 type AndroidBridge = { hasAllFilesAccess(): boolean; openAllFilesAccessSettings(): void };
 /** Added by MainActivity.kt; missing on the desktop and the iPad. */

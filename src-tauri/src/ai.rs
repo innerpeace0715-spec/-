@@ -22,26 +22,11 @@ use tauri::{AppHandle, Manager};
 const GEMINI_MODELS_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const OLLAMA_ENDPOINT: &str = "http://127.0.0.1:11434";
 const CONFIG_FILE: &str = "ai-providers.json";
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-static TLS_PROVIDER: std::sync::Once = std::sync::Once::new();
-
-/// The tablet builds (Galaxy Tab, iPad) never open a connection, so nothing
-/// about the user's files can leave the device. Android also has no
-/// INTERNET permission.
-#[cfg(any(target_os = "android", target_os = "ios"))]
+/// U-file never opens a connection on any platform (Windows, Galaxy Tab,
+/// iPad), so nothing about the user's files can leave the device. Android
+/// also has no INTERNET permission.
 fn http_client(_: Duration) -> Result<Client, String> {
-    Err("U-file 태블릿판은 파일 정보를 외부로 보내지 않습니다 / the tablet build sends nothing off the device".into())
-}
-
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn http_client(timeout: Duration) -> Result<Client, String> {
-    TLS_PROVIDER.call_once(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    });
-    Client::builder()
-        .timeout(timeout)
-        .build()
-        .map_err(|e| format!("네트워크 클라이언트를 만들 수 없습니다: {e}"))
+    Err("U-file은 파일 정보를 외부로 보내지 않습니다 / U-file sends nothing off the device".into())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1158,14 +1143,11 @@ mod tests {
         assert!(!GEMINI_MODELS_URL.contains('?') && !GEMINI_MODELS_URL.contains("key"));
         let url = format!("{GEMINI_MODELS_URL}/gemini-x:generateContent");
         assert!(!url.contains("key="));
-        let request = http_client(Duration::from_secs(1))
-            .expect("client")
-            .get(GEMINI_MODELS_URL)
-            .header("x-goog-api-key", "secret-value")
-            .build()
-            .expect("request");
-        assert!(!request.url().as_str().contains("secret-value"));
-        assert_eq!(request.headers()["x-goog-api-key"], "secret-value");
+    }
+
+    #[test]
+    fn no_build_can_open_a_connection() {
+        assert!(http_client(Duration::from_secs(1)).is_err());
     }
 
     #[cfg(windows)]

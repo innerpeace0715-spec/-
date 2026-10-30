@@ -637,8 +637,7 @@ pub fn run() {
                 fit_window_to_screen(&window);
             }
             Ok(())
-        })
-        .plugin(tauri_plugin_updater::Builder::new().build());
+        });
     builder
         .manage(PlanStore::default())
         .manage(ScanStore::default())

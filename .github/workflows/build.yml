@@ -1,11 +1,13 @@
-name: U-file (Galaxy Tab + iPad)
+name: U-file (Galaxy Tab + iPad + Windows)
 
 # Every push checks the code, builds FilmCraft's web editor from
 # vendor/filmcraft, and builds U-file with the editor inside:
 # - an APK for the Galaxy Tab S9+ (arm64), installed on an Android tablet
 #   emulator and checked end to end: "U-file-GalaxyTab-verified";
 # - an unsigned IPA for the iPad (sign it with Sideloadly/AltStore), whose
-#   code is checked end to end on an iPad simulator: "U-file-iPad".
+#   code is checked end to end on an iPad simulator: "U-file-iPad";
+# - a Windows installer (x64, current user), installed on a Windows runner
+#   and checked end to end: "U-file-Windows-verified".
 on:
   push:
   pull_request:
@@ -185,8 +187,65 @@ jobs:
             selftest/selftest.json
           if-no-files-found: error
 
-  # Small media files for the iPad simulator's self-test (macOS runners have
-  # no ffmpeg).
+  # Build the Windows installer, install it on this runner and run the app's
+  # end-to-end self-test. Only an installer that passes is published as
+  # "U-file-Windows-verified".
+  windows:
+    needs: [check, filmcraft, fixtures]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      # The planner, Recycle Bin and DPAPI code paths that only exist on Windows.
+      - name: Rust tests (Windows)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - uses: actions/download-artifact@v4
+        with:
+          name: filmcraft-web
+          path: public/filmcraft
+      - name: Build the installer
+        run: npx tauri build --bundles nsis
+      - name: Name the installer
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'no installer' }
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $setup.FullName "out/U-file-Windows-$version-setup.exe"
+      - uses: actions/download-artifact@v4
+        with:
+          name: selftest-fixtures
+          path: fixtures
+      - name: Self-test on Windows
+        shell: pwsh
+        run: scripts/windows-selftest.ps1 (Get-ChildItem out/*.exe | Select-Object -First 1).FullName fixtures selftest
+      - name: Keep the test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-Windows-selftest-evidence
+          path: selftest
+      - name: Publish the verified installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-Windows-verified
+          path: |
+            out/*.exe
+            selftest/selftest.json
+          if-no-files-found: error
+
+  # Small media files for the iPad simulator's and Windows self-tests
+  # (macOS runners have no ffmpeg).
   fixtures:
     runs-on: ubuntu-24.04
     steps:

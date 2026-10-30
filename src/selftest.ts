@@ -1,25 +1,28 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { IS_IOS } from './platform';
 import { saveBytes } from './save';
+import { basename, dirname, separatorOf } from './utils';
 import type { EditorEvent } from './VideoEditor';
 
 /**
- * End-to-end check of the installed app, run by CI on an Android emulator and
- * an iPad simulator (.github/workflows/android.yml). It starts only when the
- * test folder holds a RUN_SELFTEST file, works only inside that folder, and
- * writes its report as U-file-selftest.json to where U-file saves files
- * (Download/U-file on Android, Documents/U-file on the iPad).
+ * End-to-end check of the installed app, run by CI on an Android emulator, an
+ * iPad simulator and Windows (.github/workflows/build.yml). It starts only
+ * when the test folder holds a RUN_SELFTEST file, works only inside that
+ * folder, and writes its report as U-file-selftest.json to where U-file saves
+ * files (Download/U-file on Android, Documents/U-file on the iPad,
+ * Downloads\U-file on Windows).
  *
- * The test folder is Download/ufile-selftest on Android and
- * Documents/ufile-selftest on the iPad.
+ * The test folder is Download/ufile-selftest on Android and Windows (under
+ * the home folder there) and Documents/ufile-selftest on the iPad.
  */
 type StorageInfo = { root: string; trash: string };
 let storage: StorageInfo | null = null;
 
 async function dirs() {
   storage ??= await invoke<StorageInfo>('storage_info');
-  const base = IS_IOS ? `${storage.root}/ufile-selftest` : `${storage.root}/Download/ufile-selftest`;
-  return { base, data: `${base}/data`, trash: storage.trash };
+  const sep = separatorOf(storage.root);
+  const base = IS_IOS ? `${storage.root}${sep}ufile-selftest` : `${storage.root}${sep}Download${sep}ufile-selftest`;
+  return { base, data: `${base}${sep}data`, sep, trash: storage.trash };
 }
 
 type Listing = { path: string; folders: string[]; files: { name: string; sizeBytes: number }[] };
@@ -62,7 +65,7 @@ export async function selfTestRequested(): Promise<boolean> {
 }
 
 export async function runSelfTest(openEditor: (path: string) => void): Promise<void> {
-  const { data: DATA, trash: TRASH } = await dirs();
+  const { data: DATA, sep: SEP, trash: TRASH } = await dirs();
   const steps: Step[] = [];
   async function step(name: string, check: () => Promise<string>) {
     log(`start: ${name}`);
@@ -101,7 +104,8 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
       onProgress: progress(),
     });
     expect(plan.actions.length >= 4, `${plan.actions.length} actions, errors: ${plan.errors.join('; ')}`);
-    expect(plan.actions.every((action) => !action.destinationPath.includes('\\')), 'a destination has a backslash');
+    // Windows paths use backslashes; anywhere else one would be a Windows-only path bug.
+    expect(SEP === '\\' || plan.actions.every((action) => !action.destinationPath.includes('\\')), 'a destination has a backslash');
     return plan.actions.map((action) => action.destinationPath.slice(DATA.length + 1)).join(', ');
   });
 
@@ -139,7 +143,7 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
     // The trash is a protected folder, so U-file's own listing hides what is in it;
     // check that the copy left the test folder and nothing else did.
     const after = await listing(DATA);
-    const name = copy.slice(copy.lastIndexOf('/') + 1);
+    const name = basename(copy);
     expect(!after.files.some((file) => file.name === name), `${name} is still in the test folder`);
     expect(after.files.length === (before?.files.length ?? 0) - 1, `${after.files.length} files left`);
     return `${name} moved to ${TRASH}`;
@@ -149,7 +153,7 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
     const video = before?.files.find((file) => file.name.endsWith('.mp4'));
     expect(video !== undefined, 'no test video');
     const ready = editorEvent(['ready', 'error'], 10 * 60_000);
-    openEditor(`${DATA}/${video!.name}`);
+    openEditor(`${DATA}${SEP}${video!.name}`);
     const watch = setInterval(() => {
       const frame = document.querySelector<HTMLIFrameElement>('.editor-frame');
       const inner = frame?.contentWindow as { filmcraftLoad?: unknown; document?: Document } | null;
@@ -174,8 +178,8 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
     const event = await saved;
     expect(event.phase === 'saved', event.phase === 'save-error' ? event.message : event.phase);
     const path = event.phase === 'saved' ? event.path : '';
-    const folder = await listing(path.slice(0, path.lastIndexOf('/')));
-    const file = folder.files.find((entry) => path.endsWith(`/${entry.name}`));
+    const folder = await listing(dirname(path));
+    const file = folder.files.find((entry) => entry.name === basename(path));
     expect(file !== undefined && file.sizeBytes > 1000, `saved file missing or empty: ${path}`);
     return `${path} (${file!.sizeBytes} bytes)`;
   });

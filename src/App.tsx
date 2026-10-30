@@ -48,7 +48,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import appIcon from './assets/app-icon.png';
-import { IS_ANDROID, IS_IOS, IS_MOBILE, androidBridge, confirmBox } from './platform';
+import { IS_ANDROID, IS_IOS, IS_MOBILE, LOCAL_ONLY, androidBridge, confirmBox } from './platform';
 import VideoEditor from './VideoEditor';
 import { runSelfTest, selfTestRequested } from './selftest';
 import './styles.css';
@@ -818,8 +818,8 @@ export default function App() {
   }
 
   async function checkForUpdate(manual: boolean) {
-    // The tablets get new versions as an APK/IPA from GitHub Actions.
-    if (IS_MOBILE) return;
+    // Every build gets new versions as an APK/IPA/installer from GitHub Actions.
+    if (LOCAL_ONLY) return;
     if (manual) {
       setBusy(true);
       setNotice(t.updateLoading);
@@ -878,12 +878,12 @@ export default function App() {
   }
 
   useEffect(() => {
-    // The tablet builds have no AI providers: they never send anything off the device.
-    if (!IS_MOBILE) void refreshAiProviders();
+    // No build has AI providers: U-file never sends anything off the device.
+    if (!LOCAL_ONLY) void refreshAiProviders();
     void invoke<KnownFolder[]>('known_folders').then(setKnownFolders).catch(() => undefined);
     if (IS_ANDROID) checkStorageAccess();
-    // CI's emulator/simulator check of the installed app (src/selftest.ts).
-    if (IS_MOBILE && !startupRan.current) void selfTestRequested().then((requested) => { if (requested) void runSelfTest(setEditing); });
+    // CI's emulator/simulator/Windows check of the installed app (src/selftest.ts).
+    if (!startupRan.current) void selfTestRequested().then((requested) => { if (requested) void runSelfTest(setEditing); });
     void invoke<string | null>('startup_path')
       .then((initialPath) => {
         if (shouldUseStartupPath(initialPath)) {
@@ -1039,7 +1039,7 @@ export default function App() {
         { key: 'folder', icon: FolderOpen, action: choose },
         { key: 'preview', icon: Search, action: makePlan, disabled: !path },
         { key: 'execute', icon: Play, action: execute, disabled: !plan || !plan.planId || !selectedCount },
-        ...(IS_MOBILE ? [] : [{ key: 'aiClassify', icon: Bot, action: runAiClassification, disabled: !plan || !plan.planId || !pendingCount }]),
+        ...(LOCAL_ONLY ? [] : [{ key: 'aiClassify', icon: Bot, action: runAiClassification, disabled: !plan || !plan.planId || !pendingCount }]),
         { key: 'editFile', icon: Clapperboard, action: chooseVideo },
       ]
     : tab === 'manage'
@@ -1048,7 +1048,7 @@ export default function App() {
           { key: 'duplicates', icon: Copy, action: scanDuplicates, disabled: !path },
           { key: 'large', icon: Search, action: scanLargeFiles, disabled: !path },
           { key: 'emptyFolders', icon: FolderTree, action: scanEmptyFolders, disabled: !path },
-          ...(IS_MOBILE ? [] : [{ key: 'aiSettings', icon: Bot, action: () => setPanel('ai') }]),
+          ...(LOCAL_ONLY ? [] : [{ key: 'aiSettings', icon: Bot, action: () => setPanel('ai') }]),
         ]
       : [
           { key: 'undo', icon: Undo2, action: () => void openUndoPreview(), disabled: !runs.some((run) => run.executedCount > 0) },
@@ -1069,7 +1069,7 @@ export default function App() {
           <Settings size={20} />{pendingUpdate && <span className="update-dot" />}
         </button>
         {settings && <div className="settings-menu">
-          {!IS_MOBILE && <button onClick={() => void checkForUpdate(true)} disabled={busy}><RefreshCw size={15} /> {t.update}</button>}
+          {!LOCAL_ONLY && <button onClick={() => void checkForUpdate(true)} disabled={busy}><RefreshCw size={15} /> {t.update}</button>}
           <button onClick={() => setLang((value) => value === 'ko' ? 'en' : 'ko')}><span className="menu-language">A/가</span> {t.language}</button>
         </div>}
       </header>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { ArrowLeft, CheckCircle2, Clapperboard, RefreshCw } from 'lucide-react';
-import { IS_MOBILE, confirmBox } from './platform';
+import { confirmBox } from './platform';
 import { saveBytes } from './save';
 import { basename, friendlyPath } from './utils';
 
@@ -81,7 +81,8 @@ function firstItem(result: ImportResult): unknown {
 
 /**
  * Saving in FilmCraft clicks a hidden download link, which the Android and
- * iPad WebViews ignore. Catch those clicks and write the file to the tablet.
+ * iPad WebViews ignore (and WebView2 would put anywhere). Catch those clicks
+ * and write the file to U-file's save folder on every platform.
  */
 function captureDownloads(win: FilmCraftWindow, onSaved: (path: string) => void, onError: (message: string) => void) {
   const anchor = win.HTMLAnchorElement.prototype;
@@ -113,15 +114,13 @@ export default function VideoEditor({ path, lang, onClose }: { path: string; lan
   async function openVideo(source: string, cancelled: () => boolean) {
     const win = await whenReady(() => frame.current, source, cancelled);
     if (cancelled()) return;
-    if (IS_MOBILE) {
-      captureDownloads(win, (file) => {
-        setSaved((list) => [...list, file]);
-        report({ phase: 'saved', path: file });
-      }, (message) => {
-        setError(message);
-        report({ phase: 'save-error', message });
-      });
-    }
+    captureDownloads(win, (file) => {
+      setSaved((list) => [...list, file]);
+      report({ phase: 'saved', path: file });
+    }, (message) => {
+      setError(message);
+      report({ phase: 'save-error', message });
+    });
     setStatus(lang === 'ko' ? '영상을 불러오는 중…' : 'Loading the video…');
     const filmcraft = win.filmcraft as FilmCraft;
     const crash = watchForCrash(win);
