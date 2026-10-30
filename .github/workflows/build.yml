@@ -1,0 +1,355 @@
+name: U-file (Galaxy Tab + iPad + Windows)
+
+# Every push checks the code, builds FilmCraft's web editor from
+# vendor/filmcraft, and builds U-file with the editor inside:
+# - an APK for the Galaxy Tab S9+ (arm64), installed on an Android tablet
+#   emulator and checked end to end: "U-file-GalaxyTab-verified";
+# - an unsigned IPA for the iPad (sign it with Sideloadly/AltStore), whose
+#   code is checked end to end on an iPad simulator: "U-file-iPad";
+# - a Windows installer (x64, current user), installed on a Windows runner
+#   and checked end to end: "U-file-Windows-verified".
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ufile-${{ github.ref }}
+  # A newer push replaces checks of code that is already out of date.
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      # Tauri's desktop build on Linux, used here only to run the Rust tests.
+      - name: Install WebKitGTK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
+      - run: npm ci
+      - name: Frontend tests
+        run: npm test -- --run
+      - name: Frontend type check and build
+        run: npm run build
+      - name: Rust format
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Rust lints
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --lib --tests -- -D warnings
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+  filmcraft:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vendor/filmcraft
+      - name: Build the FilmCraft web editor
+        run: scripts/build-filmcraft.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: filmcraft-web
+          path: public/filmcraft
+          if-no-files-found: error
+
+  apk:
+    needs: [check, filmcraft]
+    runs-on: ubuntu-24.04
+    env:
+      NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+        with:
+          # The default list still names "tools", which sdkmanager no longer has.
+          packages: platform-tools
+      - name: Install the Android NDK
+        run: |
+          sdkmanager --install "ndk;${NDK_VERSION}"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: filmcraft-web
+          path: public/filmcraft
+      # Android only installs an update over an app signed with the same key.
+      # With the ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD secrets
+      # every build can be installed over the last one; without them a
+      # throwaway key is made and the old app must be uninstalled first.
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          cd src-tauri/gen/android
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > release.jks
+            password="$KEYSTORE_PASSWORD"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: signing with a one-off key. Uninstall the old U-file before installing this APK."
+            password="$(openssl rand -hex 16)"
+            keytool -genkeypair -keystore release.jks -alias filemoa -keyalg RSA -keysize 2048 \
+              -validity 10000 -storepass "$password" -keypass "$password" -dname "CN=U-file"
+          fi
+          printf 'storeFile=release.jks\npassword=%s\nkeyAlias=filemoa\n' "$password" > keystore.properties
+      - name: Build the APK
+        run: npx tauri android build --apk --target aarch64
+      - name: Name the APK
+        run: |
+          version=$(node -p "require('./package.json').version")
+          apk=$(find src-tauri/gen/android/app/build/outputs/apk -name '*-release.apk' | head -n1)
+          test -n "$apk"
+          mkdir -p out
+          cp "$apk" "out/U-file-GalaxyTab-${version}.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: U-file-GalaxyTab
+          path: out/*.apk
+          if-no-files-found: error
+
+  # Install the exact APK from the job above on an Android tablet emulator
+  # (x86_64 with ARM translation) and run the app's end-to-end self-test.
+  # Only an APK that passes is published as "U-file-GalaxyTab-verified".
+  verify:
+    needs: apk
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: U-file-GalaxyTab
+          path: apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install ffmpeg (test video)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Self-test on a tablet emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_tablet
+          ram-size: 4096M
+          disk-size: 6G
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          disable-animations: true
+          script: scripts/emulator-selftest.sh "$(ls apk/*.apk | head -n1)" selftest
+      - name: Keep the test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-selftest-evidence
+          path: selftest
+      - name: Publish the verified APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-GalaxyTab-verified
+          path: |
+            apk/*.apk
+            selftest/selftest.json
+          if-no-files-found: error
+
+  # Build the Windows installer, install it on this runner and run the app's
+  # end-to-end self-test. Only an installer that passes is published as
+  # "U-file-Windows-verified".
+  windows:
+    needs: [check, filmcraft, fixtures]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.94.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      # The planner, Recycle Bin and DPAPI code paths that only exist on Windows.
+      - name: Rust tests (Windows)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+      - uses: actions/download-artifact@v4
+        with:
+          name: filmcraft-web
+          path: public/filmcraft
+      - name: Build the installer
+        run: npx tauri build --bundles nsis
+      - name: Name the installer
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $setup) { throw 'no installer' }
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $setup.FullName "out/U-file-Windows-$version-setup.exe"
+      - uses: actions/download-artifact@v4
+        with:
+          name: selftest-fixtures
+          path: fixtures
+      - name: Self-test on Windows
+        shell: pwsh
+        run: scripts/windows-selftest.ps1 (Get-ChildItem out/*.exe | Select-Object -First 1).FullName fixtures selftest
+      - name: Keep the test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-Windows-selftest-evidence
+          path: selftest
+      - name: Publish the verified installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-Windows-verified
+          path: |
+            out/*.exe
+            selftest/selftest.json
+          if-no-files-found: error
+
+  # Small media files for the iPad simulator's and Windows self-tests
+  # (macOS runners have no ffmpeg).
+  fixtures:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Make the test files
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          mkdir fixtures
+          ffmpeg -loglevel error -f lavfi -i testsrc2=size=320x240:rate=24 -f lavfi -i sine=frequency=440 \
+            -t 2 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest fixtures/clip.mp4
+          ffmpeg -loglevel error -f lavfi -i testsrc2=size=320x240 -frames:v 1 fixtures/photo.jpg
+          cp fixtures/photo.jpg fixtures/photo-copy.jpg
+          printf 'U-file self-test\n' > fixtures/notes.txt
+          printf '%%PDF-1.4\n%%%%EOF\n' > fixtures/report.pdf
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selftest-fixtures
+          path: fixtures
+
+  ipad:
+    needs: [check, filmcraft]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install XcodeGen
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: filmcraft-web
+          path: public/filmcraft
+      # The Xcode project is generated fresh each time; U-file's own settings
+      # come from src-tauri/Info.ios.plist and tauri.conf.json.
+      - name: Create the Xcode project
+        run: npx tauri ios init --ci
+      - name: Build the iPad app (unsigned IPA)
+        run: npx tauri ios build --no-sign --ci
+      - name: Build the same app for the iPad simulator
+        run: npx tauri ios build --target aarch64-sim --no-sign --ci
+      - name: Collect the builds
+        run: |
+          version=$(node -p "require('./package.json').version")
+          mkdir -p out sim
+          find src-tauri/gen/apple -name '*.ipa' -o -name '*.app' -prune | grep -v xcarchive || true
+          ipa=$(find src-tauri/gen/apple -name '*.ipa' | grep -v sim | head -n1)
+          app=$(find src-tauri/gen/apple -name '*.app' -prune | grep -v xcarchive | grep -i sim | head -n1)
+          test -n "$ipa" && test -n "$app"
+          cp "$ipa" "out/U-file-iPad-${version}-unsigned.ipa"
+          ditto -c -k --keepParent "$app" sim/U-file-sim.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: U-file-iPad-build
+          path: out/*.ipa
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: U-file-iPad-simulator
+          path: sim/U-file-sim.zip
+          if-no-files-found: error
+
+  # Run the app's end-to-end self-test on an iPad simulator, then publish the
+  # IPA built from the same commit as "U-file-iPad".
+  ipad-verify:
+    needs: [ipad, fixtures]
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: U-file-iPad-simulator
+          path: sim
+      - uses: actions/download-artifact@v4
+        with:
+          name: selftest-fixtures
+          path: fixtures
+      - uses: actions/download-artifact@v4
+        with:
+          name: U-file-iPad-build
+          path: ipa
+      - name: Self-test on an iPad simulator
+        run: |
+          ditto -x -k sim/U-file-sim.zip sim
+          scripts/simulator-selftest.sh "$(find sim -maxdepth 1 -name '*.app' | head -n1)" fixtures selftest
+      - name: Keep the test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-iPad-selftest-evidence
+          path: selftest
+      - name: Publish the checked IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: U-file-iPad
+          path: |
+            ipa/*.ipa
+            selftest/selftest.json
+          if-no-files-found: error

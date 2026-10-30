@@ -1,0 +1,1380 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { open } from '@tauri-apps/plugin-dialog';
+import { listen } from '@tauri-apps/api/event';
+import { Channel, invoke } from '@tauri-apps/api/core';
+import { check, type Update } from '@tauri-apps/plugin-updater';
+import packageJson from '../package.json';
+import {
+  Ban,
+  Bot,
+  CalendarDays,
+  Camera,
+  CheckCircle2,
+  Clapperboard,
+  Clock3,
+  CornerLeftUp,
+  Copy,
+  Download,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  FileText,
+  Film,
+  FolderOpen,
+  FolderTree,
+  Folders,
+  HardDrive,
+  History,
+  KeyRound,
+  Image as ImageIcon,
+  Layers,
+  ListChecks,
+  ListFilter,
+  Monitor,
+  Music,
+  Play,
+  RefreshCw,
+  Search,
+  Settings,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  SlidersHorizontal,
+  Tablet,
+  Tags,
+  Trash2,
+  Undo2,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
+import appIcon from './assets/app-icon.png';
+import { IS_ANDROID, IS_IOS, IS_MOBILE, LOCAL_AI, LOCAL_ONLY, androidBridge, confirmBox } from './platform';
+import VideoEditor from './VideoEditor';
+import FileBrowser, { type Place } from './FileBrowser';
+import { runSelfTest, selfTestRequested } from './selftest';
+import './styles.css';
+import { basename, chooseKeeper, cloudOnlyNotice as cloudOnlyMessage, decideOpenFolder, dirname, duplicateGroupTitle, formatBytes, formatDay, selectForRecycle, type KeepCriterion, isCancelledError, planSummary, progressPercent, providerStatus, requestCount, runTitle as runTitleText, shouldOpenUpdateModal, shouldUseStartupPath, type OpenFolderRequest, friendlyPath, separatorOf, underRoot, isVideo, VIDEO_EXTENSIONS } from './utils';
+
+type Category = { name: string; extensions: string[]; enabled: boolean };
+type KeywordRule = { keyword: string; category: string; caseSensitive?: boolean };
+type Action = {
+  sourcePath: string;
+  destinationPath: string;
+  category: string;
+  reason: string;
+  status: string;
+  sizeBytes?: number;
+  modifiedUnixSecs?: number | null;
+  collision?: boolean;
+};
+type Plan = {
+  rootPath: string;
+  actions: Action[];
+  exclusions: string[];
+  errors: string[];
+  warnings?: string[];
+  createdAt?: string;
+  basis?: string;
+  language?: string;
+  mode?: string;
+  rootPaths?: string[];
+  runId?: string;
+  planId?: string;
+};
+type RunSummary = {
+  runId: string;
+  status: string;
+  rootPath: string;
+  createdAt: string;
+  updatedAt: string;
+  executedCount: number;
+  undoneCount: number;
+  failedCount: number;
+  errorCount: number;
+  exclusionCount: number;
+};
+type ScanResult<T> = { items: T[]; cloudOnlySkipped: number };
+type ProgressInfo = { phase: 'scan' | 'quick' | 'hash' | 'move'; done: number; total: number; current: string };
+type Duplicate = {
+  hash: string;
+  sizeBytes: number;
+  filePaths: string[];
+  modifiedSecs: number[];
+  reclaimableBytes: number;
+};
+type LargeFile = { path: string; sizeBytes: number };
+type KnownFolder = { id: string; path: string };
+type FolderListing = { path: string; parent: string | null; folders: string[]; files: { name: string; sizeBytes: number }[] };
+/** What the in-app browser picks: a folder to organize or a video to edit. */
+type BrowseMode = 'folder' | 'video';
+type AiProvider = {
+  id: string;
+  displayName: string;
+  model: string;
+  keyPresent: boolean;
+  enabled: boolean;
+  registrationUrl: string;
+  endpoint: string;
+  ollamaModels: string[];
+  available: boolean;
+};
+type AiSuggestion = {
+  id: number;
+  category: string;
+  confidence: number;
+  reason: string;
+  isNewCategory: boolean;
+  needsReview: boolean;
+};
+type AiResult = {
+  providerId: string;
+  model: string;
+  requestCount: number;
+  suggestions: AiSuggestion[];
+  proposedCategories: string[];
+  failedCount?: number;
+  failedMessage?: string | null;
+};
+type Tab = 'files' | 'organize' | 'manage' | 'safety';
+type Panel = 'plan' | 'categories' | 'duplicates' | 'history' | 'large' | 'empty' | 'ai';
+type ScanPanel = 'duplicates' | 'large' | 'empty' | null;
+type UpdateDialogState = 'idle' | 'loading' | 'available' | 'latest' | 'error';
+
+const APP_VERSION = packageJson.version;
+
+const labels = {
+  ko: {
+    files: '파일', organize: '정리', manage: '관리', safety: '안전', settings: '설정', folder: '폴더 선택',
+    preview: '정리 미리보기', execute: '파일 이동', category: '사용자 카테고리', duplicates: '중복 파일 탐색',
+    undo: '마지막 정리 되돌리기', history: '정리 기록', aiSettings: 'AI 설정', sub: '하위 폴더 포함',
+    empty: '정리할 폴더를 선택하세요', nothing: '표시할 항목이 없습니다.', update: '업데이트 확인', language: 'English',
+    catTitle: '사용자 정의 카테고리', catHint: '이름과 확장자를 입력하세요. 예: 영수증 / pdf,xlsx', add: '카테고리 추가',
+    scan: '중복 탐색 실행', scanning: '검색 중…', large: '대용량 파일', emptyFolders: '빈 폴더', plan: '정리 예정', aiClassify: 'AI 분류', aiTitle: 'AI 파일 분류 설정', aiResults: 'AI 분류 결과',
+    aiHint: 'AI는 사용자가 버튼을 눌렀을 때만 파일명·메타데이터를 전송합니다. 파일 내용과 경로는 전송하지 않습니다.',
+    selected: '이번 분류에 사용할 공급자', save: '설정 저장', test: '연결 테스트', removeKey: '저장된 키 삭제',
+    apiKey: 'API 키', model: '모델 ID', modelHint: '권장값이 기본으로 입력됩니다. 필요하면 직접 변경할 수 있습니다.',
+    getKey: '공식 키 발급 주소', localOnly: '키는 이 Windows 계정의 암호화 저장소에만 보관됩니다.',
+    ollamaReady: 'Ollama 감지됨', ollamaMissing: 'Ollama가 실행 중이 아닙니다', ollamaModels: '설치된 모델',
+    updateTitle: 'U-file 업데이트', currentVersion: '현재 버전', newVersion: '새 버전', installNow: '지금 설치',
+    installLater: '나중에 설치', close: '닫기', latest: '최신 버전을 사용하고 있습니다.', updateAvailable: '새 업데이트가 준비되었습니다.',
+    updateLoading: '업데이트 정보를 확인하는 중…', updateInstalling: '업데이트를 다운로드하고 설치하는 중…', updateErrorTitle: '업데이트 확인 실패', updateErrorFallback: '업데이트 정보를 가져오지 못했습니다.', retry: '다시 시도',
+    runAi: 'AI 분류 실행', reviewRequired: '검토 필요', newCategory: '새 카테고리 제안', requestCount: '요청 수', applySuggestions: '선택한 제안을 계획에 반영',
+    basis: '분류 기준', byType: '파일 형식', byDate: '날짜 (년-월)', byDateDay: '날짜 (년-월-일)', byYear: '연도', bySize: '파일 크기', byName: '파일명 (가나다·ABC)', dateBasis: '날짜 종류', byCreated: '생성 날짜', byModified: '수정 날짜', byAccessed: '마지막 사용', quickFolders: '빠른 폴더', desktop: '바탕화면', downloads: '다운로드', documents: '문서', pictures: '사진', videos: '동영상', music: '음악', includeHidden: '숨김 파일 포함', multiRoot: '여러 폴더', mode: '정리 모드', safeMode: '안전', normalMode: '일반', strongMode: '강력', exceptions: '예외 목록', exceptionHint: '폴더 경로 또는 확장자를 입력하면 정리에서 제외합니다.', addException: '예외 추가',
+    errors: '오류', warnings: '주의', status: '상태', collision: '이름 충돌', select: '선택', recycle: '휴지통으로 보내기', emptyHint: '삭제하지 않고 후보만 표시합니다.', largeHint: '크기순으로 표시합니다. 삭제하지 않습니다.', largeThreshold: '최소 크기(MB)',
+    undoPreview: '되돌리기 미리보기', undoConfirm: '선택한 정리를 되돌리기', cancel: '취소', moved: '이동됨', skipped: '건너뜀', failed: '실패', undone: '되돌림',
+    camera: '카메라', screenshots: '스크린샷', browseTitle: '정리할 폴더 고르기', browseUp: '상위 폴더', browseHere: '이 폴더 선택', browseAdd: '이 폴더 추가', browseEmpty: '하위 폴더가 없습니다. 이 폴더를 선택할 수 있습니다.', editFile: '파일 수정', editShort: '수정', editTitle: '수정할 영상 고르기', editEmpty: '이 폴더에는 영상이 없습니다. 다른 폴더를 열어 보세요.', notVideo: '영상 파일만 수정할 수 있습니다 (mp4, mov, mkv, webm 등).',
+    permTitle: '파일 접근 권한이 필요합니다', permBody: 'Download·DCIM 같은 폴더의 파일을 정리하려면 "모든 파일에 대한 접근" 권한이 필요합니다. 설정에서 U-file을 허용한 뒤 돌아오세요.', permButton: '권한 설정 열기',
+  },
+  en: {
+    files: 'Files', organize: 'Organize', manage: 'Manage', safety: 'Safety', settings: 'Settings', folder: 'Choose folder',
+    preview: 'Preview plan', execute: 'Move files', category: 'Custom categories', duplicates: 'Find duplicates',
+    undo: 'Undo last run', history: 'Run history', aiSettings: 'AI settings', sub: 'Include subfolders',
+    empty: 'Choose a folder to organize', nothing: 'Nothing to show yet.', update: 'Check updates', language: '한국어',
+    catTitle: 'Custom categories', catHint: 'Enter a name and extensions. Example: Receipts / pdf,xlsx', add: 'Add category',
+    scan: 'Scan duplicates', scanning: 'Scanning…', large: 'Large files', emptyFolders: 'Empty folders', plan: 'Planned changes', aiClassify: 'AI classify', aiTitle: 'AI file classification settings', aiResults: 'AI suggestions',
+    aiHint: 'AI sends filenames and metadata only when you press the button. File contents and paths are never sent.',
+    selected: 'Provider for the next classification', save: 'Save settings', test: 'Test connection', removeKey: 'Remove saved key',
+    apiKey: 'API key', model: 'Model ID', modelHint: 'A recommended value is provided and can be edited in advanced settings.',
+    getKey: 'Official key page', localOnly: 'Keys stay in an encrypted store bound to this Windows account.',
+    ollamaReady: 'Ollama detected', ollamaMissing: 'Ollama is not running', ollamaModels: 'Installed models',
+    updateTitle: 'U-file update', currentVersion: 'Current version', newVersion: 'New version', installNow: 'Install now',
+    installLater: 'Install later', close: 'Close', latest: 'You already have the latest version.', updateAvailable: 'A new update is available.',
+    updateLoading: 'Checking for updates…', updateInstalling: 'Downloading and installing the update…', updateErrorTitle: 'Update check failed', updateErrorFallback: 'The update information could not be retrieved.', retry: 'Retry',
+    runAi: 'Run AI classification', reviewRequired: 'Review required', newCategory: 'New category suggestion', requestCount: 'Requests', applySuggestions: 'Apply selected suggestions to plan',
+    basis: 'Classification basis', byType: 'File type', byDate: 'Date (YYYY-MM)', byDateDay: 'Date (YYYY-MM-DD)', byYear: 'Year', bySize: 'File size', byName: 'Filename (A–Z, ㄱ–ㅎ)', dateBasis: 'Date field', byCreated: 'Created', byModified: 'Modified', byAccessed: 'Last accessed', quickFolders: 'Quick folders', desktop: 'Desktop', downloads: 'Downloads', documents: 'Documents', pictures: 'Pictures', videos: 'Videos', music: 'Music', includeHidden: 'Include hidden files', multiRoot: 'Multiple folders', mode: 'Organization mode', safeMode: 'Safe', normalMode: 'Normal', strongMode: 'Strong', exceptions: 'Exclusions', exceptionHint: 'Paths or extensions entered here are excluded from organization.', addException: 'Add exclusion',
+    errors: 'Errors', warnings: 'Warnings', status: 'Status', collision: 'Collision', select: 'Select', recycle: 'Move to Recycle Bin', emptyHint: 'Candidates are shown only; nothing is deleted.', largeHint: 'Sorted by size; nothing is deleted.', largeThreshold: 'Minimum size (MB)', undoPreview: 'Undo preview', undoConfirm: 'Undo selected run', cancel: 'Cancel', moved: 'Moved', skipped: 'Skipped', failed: 'Failed', undone: 'Undone',
+    camera: 'Camera', screenshots: 'Screenshots', browseTitle: 'Choose a folder to organize', browseUp: 'Up', browseHere: 'Choose this folder', browseAdd: 'Add this folder', browseEmpty: 'No subfolders. You can choose this folder.', editFile: 'Edit file', editShort: 'Edit', editTitle: 'Choose a video to edit', editEmpty: 'No videos in this folder. Open another one.', notVideo: 'Only video files can be edited (mp4, mov, mkv, webm…).',
+    permTitle: 'File access is needed', permBody: 'To organize files in folders such as Download and DCIM, U-file needs "All files access". Allow it in Settings, then come back.', permButton: 'Open permission settings',
+  },
+} as const;
+
+/** Wording that differs on the tablets: there is no Windows account or Recycle Bin. */
+const mobileLabels = {
+  ko: { recycle: 'U-file 휴지통으로 보내기', localOnly: '키는 이 앱 전용 저장공간에만 보관되며 다른 앱은 읽을 수 없습니다.' },
+  en: { recycle: 'Move to U-file trash', localOnly: 'Keys stay in this app\'s private storage, which other apps cannot read.' },
+} as const;
+
+/** Where the tablet's trash folder shows up in its own file manager. */
+function trashPlace(lang: 'ko' | 'en'): string {
+  if (IS_IOS) return lang === 'ko' ? '파일 앱의 나의 iPad › U-file › U-file_휴지통' : 'Files › On My iPad › U-file › U-file_휴지통';
+  return lang === 'ko' ? '내장 저장소의 U-file_휴지통' : 'U-file_휴지통 (internal storage)';
+}
+
+function readLocal<T>(key: string, fallback: T): T {
+  try {
+    const value = readLocalText(key);
+    return value ? (JSON.parse(value) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function readLocalText(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/** Preferences are conveniences: a full or blocked store must never break the app. */
+function writeLocal(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore: the setting simply will not persist
+  }
+}
+
+export default function App() {
+  const [lang, setLang] = useState<'ko' | 'en'>(() => {
+    const stored = readLocalText('filemoa-language');
+    if (stored === 'ko' || stored === 'en') return stored;
+    return navigator.language.toLowerCase().startsWith('ko') ? 'ko' : 'en';
+  });
+  // U-file opens on its file browser, showing the last folder by itself.
+  const [tab, setTab] = useState<Tab>('files');
+  const [filesChanged, setFilesChanged] = useState(0);
+  const [previewOnOpen, setPreviewOnOpen] = useState(false);
+  const [panel, setPanel] = useState<Panel>('plan');
+  const [path, setPath] = useState('');
+  const [paths, setPaths] = useState<string[]>([]);
+  const [multiRoot, setMultiRoot] = useState(false);
+  const [sub, setSub] = useState(false);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [cats, setCats] = useState<Category[]>(() => readLocal('filemoa-categories', []));
+  const [rules, setRules] = useState<KeywordRule[]>(() => readLocal('filemoa-keyword-rules', []));
+  const [excludedPaths, setExcludedPaths] = useState<string[]>(() => readLocal('filemoa-excluded-paths', []));
+  const [excludedExtensions, setExcludedExtensions] = useState<string[]>(() => readLocal('filemoa-excluded-extensions', []));
+  const [duplicates, setDuplicates] = useState<Duplicate[]>([]);
+  const [duplicateSelection, setDuplicateSelection] = useState<string[]>([]);
+  const [keepCriterion, setKeepCriterion] = useState<KeepCriterion>('oldest');
+  const [keepFolder, setKeepFolder] = useState('');
+  const [keepApplied, setKeepApplied] = useState(false);
+  const [largeFiles, setLargeFiles] = useState<LargeFile[]>([]);
+  const [emptyFolders, setEmptyFolders] = useState<string[]>([]);
+  const [cleanupSelection, setCleanupSelection] = useState<string[]>([]);
+  const [scanPanel, setScanPanel] = useState<ScanPanel>(null);
+  const scanRequestRef = useRef(0);
+  const startupRan = useRef(false);
+  const [knownFolders, setKnownFolders] = useState<KnownFolder[]>([]);
+  const [basis, setBasis] = useState(() => readLocalText('filemoa-basis') || 'type');
+  const [mode, setMode] = useState(() => readLocalText('filemoa-mode') || 'safe');
+  const [dateBasis, setDateBasis] = useState(() => readLocalText('filemoa-date-basis') || 'modified');
+  const [largeThresholdMb, setLargeThresholdMb] = useState(() => readLocalText('filemoa-large-threshold-mb') || '100');
+  const [includeHidden, setIncludeHidden] = useState(false);
+  const [undoPreview, setUndoPreview] = useState<Plan | null>(null);
+  // Rows of the run being undone that are ticked in the undo window.
+  const [undoRows, setUndoRows] = useState<Set<number>>(() => new Set());
+  const [aiProviders, setAiProviders] = useState<AiProvider[]>([]);
+  const [selectedAi, setSelectedAi] = useState('ollama');
+  const [aiKeyDraft, setAiKeyDraft] = useState('');
+  const [aiModelDraft, setAiModelDraft] = useState('');
+  const [aiModelOptions, setAiModelOptions] = useState<string[]>([]);
+  const [aiMessage, setAiMessage] = useState('');
+  const [aiResult, setAiResult] = useState<AiResult | null>(null);
+  const [approvedAiIds, setApprovedAiIds] = useState<number[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<ProgressInfo | null>(null);
+  const [notice, setNotice] = useState('');
+  const [settings, setSettings] = useState(false);
+  const [name, setName] = useState('');
+  const [exts, setExts] = useState('');
+  const [ruleKeyword, setRuleKeyword] = useState('');
+  const [ruleCategory, setRuleCategory] = useState('');
+  const [excludedDraft, setExcludedDraft] = useState('');
+  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
+  const [updateModal, setUpdateModal] = useState(false);
+  const [updateDialogState, setUpdateDialogState] = useState<UpdateDialogState>('idle');
+  const [updateError, setUpdateError] = useState('');
+  const [updateProgress, setUpdateProgress] = useState('');
+  const t = IS_MOBILE ? { ...labels[lang], ...mobileLabels[lang] } : labels[lang];
+  const shown = (value: string) => friendlyPath(value, lang);
+  const [browser, setBrowser] = useState<FolderListing | null>(null);
+  const [browseMode, setBrowseMode] = useState<BrowseMode>('folder');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [needsAccess, setNeedsAccess] = useState(false);
+
+  const total = useMemo(() => plan?.actions.length ?? 0, [plan]);
+  const planRoots = plan ? (plan.rootPaths?.length ? plan.rootPaths : [plan.rootPath]) : [];
+  /** A preview path without the folder being organised in front. */
+  const inPlan = (value: string) => underRoot(value, planRoots) ?? shown(value);
+  // Only a plan that still has moves waiting can be run; an executed one was consumed by the backend.
+  const pendingCount = useMemo(() => plan?.actions.filter((action) => action.status === 'proposed').length ?? 0, [plan]);
+  // Rows the user unchecked in the preview; everything else is approved.
+  const [unchecked, setUnchecked] = useState<Set<number>>(() => new Set());
+  useEffect(() => setUnchecked(new Set()), [plan?.planId]);
+  const selectedCount = useMemo(
+    () => plan?.actions.filter((action, index) => action.status === 'proposed' && !unchecked.has(index)).length ?? 0,
+    [plan, unchecked],
+  );
+  const keepFolders = [...new Set(duplicates.flatMap((group) => group.filePaths.map(dirname)))].sort();
+  const groupFiles = (group: Duplicate) => group.filePaths.map((filePath, at) => ({ path: filePath, modifiedSecs: group.modifiedSecs[at] ?? 0 }));
+  const criterionLabels: Record<KeepCriterion, [string, string]> = {
+    oldest: ['가장 오래된 것', 'Oldest'],
+    newest: ['가장 최근 것', 'Newest'],
+    'shortest-path': ['경로가 가장 짧은 것', 'Shortest path'],
+    'simplest-name': ['이름이 가장 단순한 것', 'Simplest name'],
+    folder: ['지정한 폴더', 'Chosen folder'],
+  };
+  const keepNeedsFolder = keepCriterion === 'folder' && !keepFolder;
+  function applyKeepCriterion() {
+    if (keepNeedsFolder) return;
+    const { paths } = selectForRecycle(duplicates.map(groupFiles), keepCriterion, keepFolder);
+    setDuplicateSelection(paths);
+    setKeepApplied(true);
+  }
+  const duplicateSavedBytes = duplicates.reduce((sum, group) => sum + group.sizeBytes * group.filePaths.filter((item) => duplicateSelection.includes(item)).length, 0);
+
+  // Read by the listener below, which is registered once and must see current values.
+  const outside = useRef({ busy: false, hasPreview: false, lang });
+  outside.current = { busy, hasPreview: pendingCount > 0, lang };
+
+  function toggleRow(index: number) {
+    setUnchecked((previous) => {
+      const next = new Set(previous);
+      if (next.has(index)) next.delete(index); else next.add(index);
+      return next;
+    });
+  }
+  function toggleAllRows() {
+    if (!plan) return;
+    // Everything selected -> uncheck all pending rows; otherwise select them all.
+    setUnchecked(selectedCount === pendingCount
+      ? new Set(plan.actions.flatMap((action, index) => (action.status === 'proposed' ? [index] : [])))
+      : new Set());
+  }
+  const selectedProvider = aiProviders.find((provider) => provider.id === selectedAi);
+
+  async function choose() {
+    if (IS_MOBILE) {
+      setBrowseMode('folder');
+      await browse(paths[paths.length - 1]);
+      return;
+    }
+    const selected = await open({ directory: true, multiple: multiRoot, title: t.folder });
+    const selectedPaths = Array.isArray(selected) ? selected : typeof selected === 'string' ? [selected] : [];
+    if (selectedPaths.length) {
+      setPaths(selectedPaths);
+      setPath(selectedPaths.join(' · '));
+      setPlan(null);
+      setPanel('plan');
+    }
+  }
+
+  /** Open the in-app folder browser at `target` (shared storage when omitted). */
+  async function browse(target?: string) {
+    try {
+      setBrowser(await invoke<FolderListing>('list_folders', { path: target ?? null }));
+    } catch (error) {
+      if (target) await browse();
+      else setNotice(String(error));
+    }
+  }
+
+  /** "파일 수정": pick a video, then open it in the FilmCraft editor. */
+  async function chooseVideo() {
+    if (IS_MOBILE) {
+      setBrowseMode('video');
+      await browse(paths[paths.length - 1]);
+      return;
+    }
+    const selected = await open({ multiple: false, title: t.editFile, filters: [{ name: 'Video', extensions: VIDEO_EXTENSIONS }] });
+    if (typeof selected === 'string') openEditor(selected);
+  }
+
+  function openEditor(file: string) {
+    if (!isVideo(file)) {
+      setNotice(t.notVideo);
+      return;
+    }
+    setBrowser(null);
+    setEditing(file);
+  }
+
+  function pickBrowsed(folder: string) {
+    const next = multiRoot ? (paths.includes(folder) ? paths : [...paths, folder]) : [folder];
+    setPaths(next);
+    setPath(next.join(' · '));
+    setPlan(null);
+    setPanel('plan');
+    setBrowser(null);
+  }
+
+  function checkStorageAccess() {
+    const bridge = androidBridge();
+    setNeedsAccess(Boolean(bridge && !bridge.hasAllFilesAccess()));
+  }
+
+  function chooseKnownFolder(folder: KnownFolder) {
+    setPaths([folder.path]);
+    setPath(folder.path);
+    setPlan(null);
+    setPanel('plan');
+  }
+
+  function selectTab(nextTab: Tab) {
+    if (scanPanel) setBusy(false);
+    scanRequestRef.current += 1;
+    setScanPanel(null);
+    setTab(nextTab);
+    setNotice('');
+    setPanel(nextTab === 'organize' ? 'plan' : nextTab === 'manage' ? 'categories' : 'history');
+  }
+
+  function knownFolderLabel(id: string) {
+    const key = id as keyof typeof t;
+    return key in t ? t[key] : id;
+  }
+
+  const places: Place[] = knownFolders.map((folder) => ({ id: folder.id, path: folder.path, label: String(knownFolderLabel(folder.id)), icon: FOLDER_ICONS[folder.id] ?? FolderOpen }));
+
+  /** The folder on the file browser is what organize and manage work on, unless a preview is waiting. */
+  const followFolder = useRef((folder: string) => folder);
+  followFolder.current = (folder: string) => {
+    if (busy || pendingCount > 0 || paths.length > 1) return folder;
+    setPaths([folder]);
+    setPath(folder);
+    setPlan(null);
+    return folder;
+  };
+  const onBrowsedFolder = useMemo(() => (folder: string) => { followFolder.current(folder); }, []);
+
+  /** "정리" on the file browser: preview organizing the folder on screen. */
+  function organizeFolder(folder: string) {
+    setPaths([folder]);
+    setPath(folder);
+    setPlan(null);
+    setTab('organize');
+    setPanel('plan');
+    setPreviewOnOpen(true);
+  }
+
+  /** Run a long backend command and show its progress; the backend allows one at a time. */
+  async function withProgress<T>(command: string, args: Record<string, unknown>): Promise<T> {
+    const channel = new Channel<ProgressInfo>();
+    channel.onmessage = setProgress;
+    try {
+      return await invoke<T>(command, { ...args, onProgress: channel });
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  function failure(error: unknown) {
+    const cancelled = isCancelledError(error);
+    setNotice(cancelled ? (lang === 'ko' ? '작업을 취소했습니다.' : 'The operation was cancelled.') : String(error));
+  }
+
+  async function cancelOperation() {
+    try {
+      await invoke('cancel_operation');
+    } catch (error) {
+      setNotice(String(error));
+    }
+  }
+
+  async function makePlan() {
+    if (!path) return;
+    setBusy(true);
+    try {
+      const request = {
+          rootPath: path,
+          includeSubfolders: sub,
+          customCategories: cats,
+          language: lang,
+          basis,
+          mode,
+          dateBasis,
+          includeHidden,
+          excludedPaths,
+          excludedExtensions,
+          keywordRules: rules,
+        };
+      const next = paths.length > 1
+        ? await withProgress<Plan>('plan_multiple_organizations', { requests: paths.map((rootPath) => ({ ...request, rootPath })) })
+        : await withProgress<Plan>('plan_organization', { request: { ...request, rootPath: paths[0] ?? path } });
+      setPlan(next);
+      setPanel('plan');
+      setNotice('');
+    } catch (error) {
+      failure(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshRuns() {
+    try {
+      setRuns(await invoke<RunSummary[]>('list_runs'));
+    } catch (error) {
+      setNotice(String(error));
+    }
+  }
+
+  const runTitle = (run: RunSummary) => runTitleText(run, lang);
+
+  async function execute() {
+    if (!plan) return;
+    if (!selectedCount) return;
+    const confirmation = selectedCount >= 100
+      ? (lang === 'ko'
+        ? `대량 작업입니다. ${selectedCount}개 파일을 이동합니다. 미리보기와 경고를 확인했나요? 계속할까요?`
+        : `This is a bulk operation: ${selectedCount} files will move. Have you reviewed the preview and warnings? Continue?`)
+      : (lang === 'ko' ? `${selectedCount}개 파일을 이동할까요?` : `Move ${selectedCount} files?`);
+    if (!(await confirmBox(confirmation, lang))) return;
+    setBusy(true);
+    try {
+      const done = await withProgress<Plan>('execute_organization', { planId: plan.planId, excluded: [...unchecked] });
+      setPlan(done);
+      void refreshRuns();
+      setPanel('history');
+      const cancelledCount = done.actions.filter((action) => action.status === 'skipped' && /취소|cancel/i.test(action.reason)).length;
+      const movedCount = done.actions.filter((action) => action.status === 'executed').length;
+      setNotice(cancelledCount
+        ? (lang === 'ko' ? `취소했습니다. ${movedCount}개는 이동했고 ${cancelledCount}개는 그대로 남았습니다. 정리 기록에서 되돌릴 수 있습니다.` : `Cancelled. ${movedCount} moved, ${cancelledCount} left in place. You can undo the moved ones from the history.`)
+        : (lang === 'ko' ? '정리가 완료되었습니다.' : 'Organization completed.'));
+    } catch (error) {
+      failure(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openUndoPreview(runId = runs.find((run) => run.executedCount > 0)?.runId) {
+    if (!runId) return;
+    try {
+      const loaded = await invoke<Plan>('load_run', { runId });
+      setUndoRows(new Set(loaded.actions.flatMap((action, index) => (action.status === 'executed' ? [index] : []))));
+      setUndoPreview(loaded);
+    } catch (error) {
+      setNotice(String(error));
+    }
+  }
+
+  async function undo(run = undoPreview) {
+    if (!run) return;
+    const rows = [...undoRows].filter((row) => run.actions[row]?.status === 'executed');
+    const restoreCount = rows.length;
+    if (!restoreCount || !(await confirmBox(lang === 'ko' ? `${restoreCount}개 파일을 원래 위치로 되돌릴까요? 기존 파일은 덮어쓰지 않습니다.` : `Restore ${restoreCount} files to their original locations? Existing files will never be overwritten.`, lang))) return;
+    setBusy(true);
+    try {
+      const done = await invoke<Plan>('undo_organization', { runId: run.runId, only: rows });
+      void refreshRuns();
+      setPlan(done);
+      setUndoPreview(null);
+      const remaining = done.actions.filter((action) => action.status === 'executed').length;
+      setNotice(remaining
+        ? (lang === 'ko' ? `${restoreCount}개를 되돌렸습니다. ${remaining}개는 이동된 상태로 남아 있고 정리 기록에서 다시 되돌릴 수 있습니다.` : `${restoreCount} restored. ${remaining} stay moved and can be undone later from the history.`)
+        : (lang === 'ko' ? '정리를 모두 되돌렸습니다.' : 'The organization was fully undone.'));
+    } catch (error) {
+      failure(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeRun(run: RunSummary) {
+    const warning = run.executedCount > 0
+      ? (lang === 'ko' ? `이 정리 기록을 삭제할까요?\n아직 이동된 파일 ${run.executedCount}개는 더 이상 되돌릴 수 없게 됩니다(파일 자체는 지워지지 않습니다).` : `Delete this history entry?\n The ${run.executedCount} files that are still moved can no longer be undone (the files themselves are not deleted).`)
+      : (lang === 'ko' ? '이 정리 기록을 삭제할까요?' : 'Delete this history entry?');
+    if (!(await confirmBox(warning, lang))) return;
+    setBusy(true);
+    try {
+      await invoke('delete_run', { runId: run.runId });
+      await refreshRuns();
+    } catch (error) {
+      failure(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function scanDuplicates() {
+    if (!path) return;
+    const requestId = ++scanRequestRef.current;
+    const roots = paths.length ? paths : [path];
+    setPanel('duplicates');
+    setScanPanel('duplicates');
+    setDuplicates([]);
+    setDuplicateSelection([]);
+    setKeepApplied(false);
+    setNotice('');
+    setBusy(true);
+    try {
+      const scans: ScanResult<Duplicate>[] = [];
+      for (const rootPath of roots) scans.push(await withProgress<ScanResult<Duplicate>>('find_duplicates', { rootPath, includeSubfolders: sub }));
+      if (requestId === scanRequestRef.current) {
+        setDuplicates(scans.flatMap((scan) => scan.items));
+        setNotice(cloudOnlyNotice(scans.reduce((sum, scan) => sum + scan.cloudOnlySkipped, 0)));
+      }
+    } catch (error) {
+      if (requestId === scanRequestRef.current) failure(error);
+    } finally {
+      if (requestId === scanRequestRef.current) {
+        setScanPanel(null);
+        setBusy(false);
+      }
+    }
+  }
+
+  const cloudOnlyNotice = (count: number) => cloudOnlyMessage(count, lang);
+
+  async function scanLargeFiles() {
+    if (!path) return;
+    const requestId = ++scanRequestRef.current;
+    const roots = paths.length ? paths : [path];
+    setPanel('large');
+    setScanPanel('large');
+    setLargeFiles([]);
+    setCleanupSelection([]);
+    setNotice('');
+    setBusy(true);
+    try {
+      const threshold = Math.max(1, Number(largeThresholdMb) || 100) * 1024 * 1024;
+      const scans: ScanResult<LargeFile>[] = [];
+      for (const rootPath of roots) scans.push(await withProgress<ScanResult<LargeFile>>('find_large_files', { rootPath, includeSubfolders: sub, minimumSizeBytes: threshold }));
+      if (requestId === scanRequestRef.current) {
+        setLargeFiles(scans.flatMap((scan) => scan.items));
+        setNotice(cloudOnlyNotice(scans.reduce((sum, scan) => sum + scan.cloudOnlySkipped, 0)));
+      }
+    } catch (error) {
+      if (requestId === scanRequestRef.current) failure(error);
+    } finally {
+      if (requestId === scanRequestRef.current) {
+        setScanPanel(null);
+        setBusy(false);
+      }
+    }
+  }
+
+  async function scanEmptyFolders() {
+    if (!path) return;
+    const requestId = ++scanRequestRef.current;
+    const roots = paths.length ? paths : [path];
+    setPanel('empty');
+    setScanPanel('empty');
+    setEmptyFolders([]);
+    setCleanupSelection([]);
+    setNotice('');
+    setBusy(true);
+    try {
+      const results: string[] = [];
+      for (const rootPath of roots) results.push(...(await withProgress<string[]>('find_empty_folders', { rootPath, includeSubfolders: sub })));
+      if (requestId === scanRequestRef.current) setEmptyFolders(results);
+    } catch (error) {
+      if (requestId === scanRequestRef.current) failure(error);
+    } finally {
+      if (requestId === scanRequestRef.current) {
+        setScanPanel(null);
+        setBusy(false);
+      }
+    }
+  }
+
+  async function recycleSelected(pathsToRecycle: string[]) {
+    if (!pathsToRecycle.length) return;
+    const confirmed = await confirmBox(IS_MOBILE
+      ? (lang === 'ko' ? `선택한 ${pathsToRecycle.length}개 항목을 ${trashPlace(lang)} 폴더로 옮길까요? 그 폴더에서 언제든 되살릴 수 있습니다.` : `Move ${pathsToRecycle.length} selected item(s) to the ${trashPlace(lang)} folder? You can restore them from there at any time.`)
+      : (lang === 'ko' ? `선택한 ${pathsToRecycle.length}개 항목을 휴지통으로 보낼까요?` : `Move ${pathsToRecycle.length} selected item(s) to the Recycle Bin?`), lang);
+    if (!confirmed) return;
+    setBusy(true);
+    try {
+      const outcome = await invoke<{ recycled: string[]; skipped: { path: string; reason: string }[] }>('recycle_files', { paths: pathsToRecycle });
+      const moved = outcome.recycled;
+      setDuplicateSelection((previous) => previous.filter((item) => !moved.includes(item)));
+      setCleanupSelection((previous) => previous.filter((item) => !moved.includes(item)));
+      setDuplicates((previous) => previous.map((group) => { const left = group.filePaths.map((item, at) => ({ item, secs: group.modifiedSecs[at] ?? 0 })).filter((entry) => !moved.includes(entry.item)); return { ...group, filePaths: left.map((entry) => entry.item), modifiedSecs: left.map((entry) => entry.secs), reclaimableBytes: group.sizeBytes * Math.max(0, left.length - 1) }; }).filter((group) => group.filePaths.length > 1));
+      setEmptyFolders((previous) => previous.filter((item) => !moved.includes(item)));
+      const skippedCount = outcome.skipped.length;
+      const firstReason = skippedCount ? outcome.skipped[0].reason : '';
+      setNotice(lang === 'ko'
+        ? `${moved.length}개 항목을 휴지통으로 보냈습니다.${skippedCount ? ` ${skippedCount}개는 삭제하지 않았습니다: ${firstReason}` : ''}`
+        : `${moved.length} item(s) moved to the Recycle Bin.${skippedCount ? ` ${skippedCount} item(s) were not deleted: ${firstReason}` : ''}`);
+    } catch (error) {
+      failure(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runAiClassification() {
+    if (!plan || !selectedProvider || !plan.actions.length) return;
+    if (selectedProvider.id === 'ollama' && !selectedProvider.available) {
+      setAiMessage(lang === 'ko' ? 'Ollama가 실행 중인지 확인하세요.' : 'Start Ollama before classification.');
+      setPanel('ai');
+      return;
+    }
+    const requestTotal = requestCount(plan.actions.length);
+    const confirmed = await confirmBox(
+      lang === 'ko'
+        ? `${selectedProvider.displayName} (${selectedProvider.model})로 ${plan.actions.length}개 파일의 메타데이터를 ${requestTotal}회 요청합니다. 파일 내용과 전체 경로는 보내지 않습니다. 계속할까요?`
+        : `Send metadata for ${plan.actions.length} files to ${selectedProvider.displayName} (${selectedProvider.model}) in ${requestTotal} request(s)? File contents and full paths are never sent.`,
+      lang,
+    );
+    if (!confirmed) return;
+    const files = plan.actions.map((action, id) => {
+      const name = basename(action.sourcePath);
+      const dot = name.lastIndexOf('.');
+      return {
+        id,
+        name,
+        extension: dot > 0 ? name.slice(dot + 1).toLowerCase() : '',
+        sizeBytes: action.sizeBytes ?? 0,
+        modifiedUnixSecs: action.modifiedUnixSecs ?? null,
+      };
+    });
+    const categories = Array.from(new Set([...plan.actions.map((action) => action.category), ...cats.map((category) => category.name)]));
+    setBusy(true);
+    setPanel('ai');
+    setAiMessage('');
+    try {
+      const result = await invoke<AiResult>('classify_files', { providerId: selectedProvider.id, files, categories });
+      setAiResult(result);
+      setApprovedAiIds([]);
+      const failed = result.failedCount ?? 0;
+      const partial = failed
+        ? (lang === 'ko' ? ` ${failed}개 파일은 응답을 받지 못해 제외했습니다(${result.failedMessage ?? ''}). 나머지만 검토하세요.` : ` ${failed} files got no answer and were left out (${result.failedMessage ?? ''}). Review the rest.`)
+        : '';
+      setAiMessage((lang === 'ko' ? `${result.suggestions.length}개 제안을 받았습니다. 검토 후 승인하세요.` : `${result.suggestions.length} suggestions received. Review and approve them.`) + partial);
+    } catch (error) {
+      setAiMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadAiModels() {
+    if (!selectedProvider) return;
+    setBusy(true);
+    try {
+      const models = await invoke<string[]>('list_ai_models', { providerId: selectedProvider.id });
+      setAiModelOptions(models);
+      setAiMessage(lang === 'ko' ? `사용 가능한 모델 ${models.length}개를 불러왔습니다. 모델 칸에서 선택하세요.` : `${models.length} models available. Pick one in the model field.`);
+    } catch (error) {
+      setAiMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyAiSuggestions() {
+    if (!plan || !aiResult || !approvedAiIds.length) return;
+    const approved = aiResult.suggestions.filter((suggestion) => approvedAiIds.includes(suggestion.id));
+    setBusy(true);
+    try {
+      const next = await invoke<Plan>('apply_ai_suggestions', { planId: plan.planId, suggestions: approved });
+      const proposed = approved.filter((suggestion) => suggestion.isNewCategory);
+      if (proposed.length) {
+        setCats((previous) => {
+          const existingNames = new Set(previous.map((category) => category.name.toLowerCase()));
+          const additions = proposed.filter((suggestion) => !existingNames.has(suggestion.category.toLowerCase())).map((suggestion) => {
+            const action = plan.actions[suggestion.id];
+            const name = action ? basename(action.sourcePath) : '';
+            const dot = name.lastIndexOf('.');
+            return { name: suggestion.category, extensions: dot > 0 ? [name.slice(dot + 1).toLowerCase()] : [], enabled: true };
+          }).filter((category) => category.extensions.length);
+          return [...previous, ...additions];
+        });
+      }
+      setPlan(next);
+      setAiResult(null);
+      setApprovedAiIds([]);
+      setPanel('plan');
+      setNotice(lang === 'ko' ? '승인한 AI 제안을 정리 계획에 반영했습니다. 미리보기를 확인하세요.' : 'Approved AI suggestions are in the plan. Review it before moving files.');
+    } catch (error) {
+      setAiMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshAiProviders() {
+    try {
+      // The cloud providers would send file names off the device; only Ollama stays.
+      const providers = (await invoke<AiProvider[]>('get_ai_provider_settings')).filter((provider) => !LOCAL_ONLY || provider.id === 'ollama');
+      setAiProviders(providers);
+      const active = providers.find((provider) => provider.id === selectedAi) ?? providers[0];
+      if (active) setAiModelDraft(active.model);
+    } catch (error) {
+      setAiMessage(String(error));
+    }
+  }
+
+  async function saveAiProvider() {
+    const provider = selectedProvider;
+    if (!provider) return;
+    setBusy(true);
+    try {
+      await invoke('save_ai_provider', { providerId: provider.id, model: aiModelDraft.trim(), apiKey: aiKeyDraft.trim() || null, enabled: provider.enabled });
+      setAiKeyDraft('');
+      await refreshAiProviders();
+      setAiMessage(lang === 'ko' ? '암호화하여 저장했습니다.' : 'Saved in encrypted storage.');
+    } catch (error) {
+      setAiMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testAiProvider() {
+    if (!selectedProvider) return;
+    setBusy(true);
+    try {
+      await invoke('test_ai_provider_connection', { providerId: selectedProvider.id });
+      setAiMessage(lang === 'ko' ? '연결 테스트에 성공했습니다.' : 'Connection test succeeded.');
+    } catch (error) {
+      setAiMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeAiKey() {
+    if (!selectedProvider || selectedProvider.id === 'ollama') return;
+    setBusy(true);
+    try {
+      await invoke('remove_ai_provider_key', { providerId: selectedProvider.id });
+      await refreshAiProviders();
+      setAiMessage(lang === 'ko' ? '저장된 API 키를 삭제했습니다.' : 'Saved API key removed.');
+    } catch (error) {
+      setAiMessage(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function checkForUpdate(manual: boolean) {
+    // Every build gets new versions as an APK/IPA/installer from GitHub Actions.
+    if (LOCAL_ONLY) return;
+    if (manual) {
+      setBusy(true);
+      setNotice(t.updateLoading);
+      setUpdateProgress('');
+      setUpdateError('');
+      setUpdateDialogState('loading');
+      setUpdateModal(true);
+    }
+    try {
+      const available = await check({
+        headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' },
+        timeout: 15_000,
+      });
+      setPendingUpdate(available);
+      if (available) {
+        setNotice(t.updateAvailable);
+        if (shouldOpenUpdateModal(manual, Boolean(available))) setUpdateDialogState('available');
+      } else if (manual) {
+        setNotice(t.latest);
+        setUpdateDialogState('latest');
+      }
+    } catch (error) {
+      if (manual) {
+        const message = String(error);
+        setUpdateError(message);
+        setNotice(message);
+        setUpdateDialogState('error');
+      }
+    } finally {
+      if (manual) setBusy(false);
+    }
+  }
+
+  async function installUpdate() {
+    if (!pendingUpdate) return;
+    setBusy(true);
+    setUpdateProgress(t.updateInstalling);
+    try {
+      await pendingUpdate.downloadAndInstall(undefined, { restartAfterInstall: true });
+    } catch (error) {
+      const message = String(error);
+      setUpdateProgress('');
+      setUpdateError(message);
+      setNotice(message);
+      setUpdateDialogState('error');
+      setBusy(false);
+    }
+  }
+
+  function dismissUpdateModal() {
+    if (busy) return;
+    setUpdateModal(false);
+    setUpdateDialogState('idle');
+    setUpdateProgress('');
+    setUpdateError('');
+  }
+
+  useEffect(() => {
+    // AI only through Ollama on this computer: nothing goes off the device.
+    if (LOCAL_AI) void refreshAiProviders();
+    void invoke<KnownFolder[]>('known_folders').then(setKnownFolders).catch(() => undefined);
+    if (IS_ANDROID) checkStorageAccess();
+    // CI's emulator/simulator/Windows check of the installed app (src/selftest.ts).
+    if (!startupRan.current) void selfTestRequested().then((requested) => { if (requested) void runSelfTest(setEditing); });
+    void invoke<string | null>('startup_path')
+      .then((initialPath) => {
+        if (shouldUseStartupPath(initialPath)) {
+          setPaths([initialPath]);
+          setPath(initialPath);
+          setPanel('plan');
+        }
+      })
+      .catch((error) => setNotice(String(error)));
+    // StrictMode runs effects twice in development; import and recovery must run once.
+    if (startupRan.current) return;
+    startupRan.current = true;
+    void (async () => {
+      let notice = '';
+      const legacy = readLocal<Plan[]>('filemoa-runs', []);
+      if (legacy.length) {
+        let failed = 0;
+        for (const run of legacy) {
+          try {
+            await invoke('import_legacy_runs', { runs: [run] });
+          } catch {
+            failed += 1;
+          }
+        }
+        try {
+          localStorage.removeItem('filemoa-runs');
+        } catch {
+          // ignore
+        }
+        if (failed) {
+          notice = lang === 'ko' ? `이전 기록 ${failed}개를 가져오지 못했습니다.` : `${failed} older history entries could not be imported.`;
+        }
+      }
+      try {
+        const recovered = await invoke<Plan[]>('recover_interrupted_runs');
+        if (recovered.length) {
+          const moved = recovered.reduce((sum, run) => sum + run.actions.filter((action) => action.status === 'executed').length, 0);
+          setPanel('history');
+          notice = lang === 'ko'
+            ? `이전 정리가 중단되었습니다. 이동된 ${moved}개 파일이 기록에 복구되었습니다. 정리 기록에서 확인하거나 되돌릴 수 있습니다.`
+            : `A previous organization was interrupted. ${moved} moved files were recovered into the history, where you can review or undo them.`;
+        }
+      } catch (error) {
+        notice = String(error);
+      }
+      await refreshRuns();
+      if (notice) setNotice(notice);
+    })();
+    // Startup checks are silent: they only set the update badge/notice.
+    void checkForUpdate(false);
+  }, []);
+
+  // Another launch (Explorer's right-click menu, a shortcut) hands its folder to this window.
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    void listen<OpenFolderRequest>('open-folder', async (event) => {
+      const { busy: isBusy, hasPreview, lang: language } = outside.current;
+      const request = event.payload;
+      const folder = request.path ?? '';
+      const decision = decideOpenFolder(request, { busy: isBusy, hasPreview });
+      if (decision === 'bring-forward') return;
+      if (decision === 'error') { setNotice(request.error ?? ''); return; }
+      if (decision === 'busy') {
+        setNotice(language === 'ko'
+          ? `작업이 진행 중이라 폴더를 바꾸지 못했습니다. 끝난 뒤 다시 열어 주세요: ${folder}`
+          : `A task is running, so the folder was not changed. Open it again when it finishes: ${folder}`);
+        return;
+      }
+      if (decision === 'confirm' && !(await confirmBox(language === 'ko'
+        ? `현재 정리 미리보기를 버리고 "${folder}" 폴더로 바꿀까요?\n(아직 이동하지 않은 미리보기는 사라집니다.)`
+        : `Discard the current preview and switch to "${folder}"?\n(The preview that has not been run will be lost.)`, language))) return;
+      setTab('organize');
+      setPanel('plan');
+      setPlan(null);
+      setPaths([folder]);
+      setPath(folder);
+      setNotice('');
+    }).then((unlisten) => {
+      if (cancelled) unlisten(); else stop = unlisten;
+    });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, []);
+
+  // MainActivity fires this when the app returns, e.g. from the permission screen.
+  useEffect(() => {
+    if (!IS_ANDROID) return;
+    const onResume = () => {
+      checkStorageAccess();
+      void invoke<KnownFolder[]>('known_folders').then(setKnownFolders).catch(() => undefined);
+    };
+    window.addEventListener('filemoa-resume', onResume);
+    return () => window.removeEventListener('filemoa-resume', onResume);
+  }, []);
+
+  useEffect(() => {
+    writeLocal('filemoa-language', lang);
+    writeLocal('filemoa-categories', JSON.stringify(cats));
+    writeLocal('filemoa-keyword-rules', JSON.stringify(rules));
+    writeLocal('filemoa-excluded-paths', JSON.stringify(excludedPaths));
+    writeLocal('filemoa-excluded-extensions', JSON.stringify(excludedExtensions));
+    writeLocal('filemoa-basis', basis);
+    writeLocal('filemoa-mode', mode);
+    writeLocal('filemoa-date-basis', dateBasis);
+    writeLocal('filemoa-large-threshold-mb', largeThresholdMb);
+  }, [lang, cats, rules, excludedPaths, excludedExtensions, basis, mode, dateBasis, largeThresholdMb]);
+
+  // "정리" on the file browser previews at once, once the folder is set.
+  useEffect(() => {
+    if (!previewOnOpen || !path) return;
+    setPreviewOnOpen(false);
+    void makePlan();
+  }, [previewOnOpen, path]);
+
+  // After U-file moved or removed files, the browser reads its folder again.
+  useEffect(() => {
+    if (!busy) setFilesChanged((count) => count + 1);
+  }, [busy]);
+
+  useEffect(() => {
+    const provider = aiProviders.find((item) => item.id === selectedAi);
+    if (provider) setAiModelDraft(provider.model);
+  }, [selectedAi, aiProviders]);
+
+  function addCategory() {
+    const extensions = exts.split(',').map((value) => value.trim().replace(/^\./, '')).filter(Boolean);
+    if (!name.trim() || !extensions.length) return;
+    setCats((previous) => [...previous, { name: name.trim(), extensions, enabled: true }]);
+    setName('');
+    setExts('');
+  }
+
+  function removeCategory(index: number) {
+    setCats((previous) => previous.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function addRule() {
+    if (!ruleKeyword.trim() || !ruleCategory.trim()) return;
+    setRules((previous) => [...previous, { keyword: ruleKeyword.trim(), category: ruleCategory.trim() }]);
+    setRuleKeyword('');
+    setRuleCategory('');
+  }
+
+  function removeRule(index: number) {
+    setRules((previous) => previous.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function addExclusion() {
+    const value = excludedDraft.trim();
+    if (!value) return;
+    if (value.startsWith('.') || /^[a-z0-9]+$/i.test(value)) {
+      const extension = value.replace(/^\./, '').toLowerCase();
+      setExcludedExtensions((previous) => previous.includes(extension) ? previous : [...previous, extension]);
+    } else {
+      setExcludedPaths((previous) => previous.includes(value) ? previous : [...previous, value]);
+    }
+    setExcludedDraft('');
+  }
+
+  const ribbon = tab === 'organize'
+    ? [
+        { key: 'folder', icon: FolderOpen, action: choose },
+        { key: 'preview', icon: Search, action: makePlan, disabled: !path },
+        { key: 'execute', icon: Play, action: execute, disabled: !plan || !plan.planId || !selectedCount },
+        ...(!LOCAL_AI ? [] : [{ key: 'aiClassify', icon: Bot, action: runAiClassification, disabled: !plan || !plan.planId || !pendingCount }]),
+        { key: 'editFile', icon: Clapperboard, action: chooseVideo },
+      ]
+    : tab === 'manage'
+      ? [
+          { key: 'category', icon: Tags, action: () => setPanel('categories') },
+          { key: 'duplicates', icon: Copy, action: scanDuplicates, disabled: !path },
+          { key: 'large', icon: Search, action: scanLargeFiles, disabled: !path },
+          { key: 'emptyFolders', icon: FolderTree, action: scanEmptyFolders, disabled: !path },
+          ...(!LOCAL_AI ? [] : [{ key: 'aiSettings', icon: Bot, action: () => setPanel('ai') }]),
+        ]
+      : [
+          { key: 'undo', icon: Undo2, action: () => void openUndoPreview(), disabled: !runs.some((run) => run.executedCount > 0) },
+          { key: 'history', icon: History, action: () => setPanel('history') },
+        ];
+
+  return (
+    <main>
+      <header className="top-nav">
+        <div className="brand">
+          <img className="brand-icon" src={appIcon} alt="" width={44} height={44} />
+          <div>
+            <div className="brand-line"><h1>U-file</h1><span className="app-version">v{APP_VERSION}</span></div>
+            <p>{lang === 'ko' ? '안전하게 정리하고, 언제든 되돌리세요' : 'Organize safely. Undo anytime.'}</p>
+          </div>
+        </div>
+        <button className="settings" onClick={() => setSettings((value) => !value)} aria-label={t.settings}>
+          <Settings size={20} />{pendingUpdate && <span className="update-dot" />}
+        </button>
+        {settings && <div className="settings-menu">
+          {!LOCAL_ONLY && <button onClick={() => void checkForUpdate(true)} disabled={busy}><RefreshCw size={15} /> {t.update}</button>}
+          <button onClick={() => setLang((value) => value === 'ko' ? 'en' : 'ko')}><span className="menu-language">A/가</span> {t.language}</button>
+        </div>}
+      </header>
+
+      <nav className="tabs">
+        {(['files', 'organize', 'manage', 'safety'] as Tab[]).map((item) => {
+          const TabIcon = TAB_ICONS[item];
+          return <button className={tab === item ? 'active' : ''} onClick={() => selectTab(item)} key={item} aria-current={tab === item ? 'page' : undefined}><TabIcon size={17} aria-hidden="true" />{t[item]}</button>;
+        })}
+      </nav>
+
+      {needsAccess && <div className="permission-card" role="alert">
+        <KeyRound size={26} aria-hidden="true" />
+        <div><b>{t.permTitle}</b><p>{t.permBody}</p></div>
+        <button className="primary-action" onClick={() => androidBridge()?.openAllFilesAccessSettings()}>{t.permButton}</button>
+      </div>}
+
+      {tab === 'files' && <FileBrowser lang={lang} places={places} busy={busy} refreshKey={filesChanged} onFolder={onBrowsedFolder} onOrganize={organizeFolder} onEdit={openEditor} />}
+
+      {tab !== 'files' && <section className="ribbon">
+        <div className="ribbon-main">
+          <div className="ribbon-actions">
+            {ribbon.map(({ key, icon: Icon, action, disabled }) => <button key={key} onClick={() => void action()} disabled={busy || disabled}><Icon size={22} /><span>{t[key as keyof typeof t]}</span></button>)}
+          </div>
+          {tab === 'organize' && <div className="ribbon-controls">
+            <div className="ribbon-group" role="group" aria-label={lang === 'ko' ? '분류 방식' : 'How to sort'}>
+            <label className="ribbon-option"><ListFilter size={16} aria-hidden="true" /><span>{t.basis}</span><select value={basis} onChange={(event) => setBasis(event.target.value)}><option value="type">{t.byType}</option><option value="date">{t.byDate}</option><option value="date_day">{t.byDateDay}</option><option value="year">{t.byYear}</option><option value="size">{t.bySize}</option><option value="name">{t.byName}</option></select></label>
+            {(basis === 'date' || basis === 'date_day' || basis === 'year') && <label className="ribbon-option"><CalendarDays size={16} aria-hidden="true" /><span>{t.dateBasis}</span><select value={dateBasis} onChange={(event) => setDateBasis(event.target.value)}><option value="created">{t.byCreated}</option><option value="modified">{t.byModified}</option><option value="accessed">{t.byAccessed}</option></select></label>}
+            <label className="ribbon-option">{mode === 'strong' ? <ShieldAlert size={16} aria-hidden="true" /> : mode === 'normal' ? <Shield size={16} aria-hidden="true" /> : <ShieldCheck size={16} aria-hidden="true" />}<span>{t.mode}</span><select value={mode} onChange={(event) => setMode(event.target.value)}><option value="safe">{t.safeMode}</option><option value="normal">{t.normalMode}</option><option value="strong">{t.strongMode}</option></select></label>
+            </div>
+            <span className="ribbon-divider" aria-hidden="true" />
+            <div className="ribbon-group" role="group" aria-label={lang === 'ko' ? '정리 범위' : 'What to include'}>
+            <ToggleChip icon={Layers} checked={sub} onChange={setSub} label={t.sub} />
+            <ToggleChip icon={includeHidden ? Eye : EyeOff} checked={includeHidden} onChange={setIncludeHidden} label={t.includeHidden} />
+            <ToggleChip icon={Folders} checked={multiRoot} onChange={(next) => { setMultiRoot(next); if (!next && paths.length > 1) { setPaths(paths.slice(0, 1)); setPath(paths[0]); } }} label={t.multiRoot} />
+            </div>
+          </div>}
+        </div>
+        {tab === 'organize' && knownFolders.length > 0 && <div className="quick-folders" aria-label={t.quickFolders}>
+          <span className="quick-folders-label">{t.quickFolders}</span>
+          {knownFolders.map((folder) => <button className="quick-folder" key={folder.id} onClick={() => chooseKnownFolder(folder)} disabled={busy} title={folder.path}>{(() => { const FolderIcon = FOLDER_ICONS[folder.id] ?? FolderOpen; return <FolderIcon size={15} aria-hidden="true" />; })()}{knownFolderLabel(folder.id)}</button>)}
+        </div>}
+        <code className="ribbon-path" title={path || t.empty}>{paths.length ? paths.map(shown).join(' · ') : path || t.empty}</code>
+      </section>}
+
+      {progress && <ProgressBar progress={progress} lang={lang} onCancel={() => void cancelOperation()} />}
+      {notice && <p className="notice">{notice}</p>}
+
+      {tab !== 'files' && <section className="workspace">
+        {panel === 'plan' && <>
+          <div className="manage-head"><ListChecks size={20} aria-hidden="true" /><h2>{t.plan}</h2></div>
+          {plan ? <>
+            <p>{planSummary({ files: total, exclusions: plan.exclusions.length, errors: plan.errors.length, warnings: plan.warnings?.length ?? 0 }, lang)}{pendingCount > 0 && <strong className="selection-count"> · {lang === 'ko' ? `이동 선택 ${selectedCount}/${pendingCount}개` : `${selectedCount}/${pendingCount} selected to move`}</strong>}<br /><span className="muted">{lang === 'ko' ? '기준 폴더' : 'Folder'}: {planRoots.map(shown).join(' · ')}</span></p>
+            {plan.warnings && plan.warnings.length > 0 && <details className="plan-details warning-details" open><summary>{t.warnings} ({plan.warnings.length})</summary>{plan.warnings.map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}</details>}
+            <div className="table"><div className="row row-select table-heading"><span className="row-check">{pendingCount > 0 && <input type="checkbox" aria-label={lang === 'ko' ? '이동할 항목 전체 선택' : 'Select all moves'} checked={selectedCount === pendingCount} ref={(element) => { if (element) element.indeterminate = selectedCount > 0 && selectedCount < pendingCount; }} onChange={toggleAllRows} />}</span><b>{t.category}</b><span>{lang === 'ko' ? '현재 위치' : 'Current path'}</span><span>{lang === 'ko' ? '이동 위치' : 'Destination'}</span><small>{t.status}</small></div>{plan.actions.map((action, index) => <div className={`row row-select ${action.status !== 'proposed' ? `action-${action.status}` : unchecked.has(index) ? 'row-unchecked' : ''}`} key={`${action.sourcePath}-${index}`}><span className="row-check">{action.status === 'proposed' && <input type="checkbox" aria-label={lang === 'ko' ? `${basename(action.sourcePath)} 이동` : `Move ${basename(action.sourcePath)}`} checked={!unchecked.has(index)} onChange={() => toggleRow(index)} />}</span><b>{action.category}</b><span title={action.sourcePath}>{inPlan(action.sourcePath)}</span><span title={action.destinationPath}>→ {inPlan(action.destinationPath)}{action.collision && <em className="collision-badge">{t.collision}</em>}</span><small>{action.reason} · {action.status === 'proposed' ? (lang === 'ko' ? '이동 예정' : 'Pending') : action.status}{action.status === 'proposed' && isVideo(action.sourcePath) && <button className="edit-chip" onClick={() => openEditor(action.sourcePath)} disabled={busy}><Clapperboard size={14} /> {t.editShort}</button>}</small></div>)}</div>
+            {pendingCount > 0 && <div className="sticky-actions">
+              <span className="selection-count">{lang === 'ko' ? `이동 선택 ${selectedCount}/${pendingCount}개` : `${selectedCount}/${pendingCount} selected`}</span>
+              <button className="primary-action" onClick={() => void execute()} disabled={busy || !plan.planId || !selectedCount}><Play size={18} /> {t.execute}</button>
+            </div>}
+            {plan.exclusions.length > 0 && <details className="plan-details"><summary>{lang === 'ko' ? '제외된 항목' : 'Excluded items'} ({plan.exclusions.length})</summary>{plan.exclusions.map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}</details>}
+            {plan.errors.length > 0 && <details className="plan-details error-details" open><summary>{t.errors} ({plan.errors.length})</summary>{plan.errors.map((item, index) => <p key={`${item}-${index}`}>{item}</p>)}</details>}
+          </> : <Empty text={t.nothing} />}
+        </>}
+
+        {panel === 'categories' && <div className="manage-grid">
+          <section className="manage-card">
+            <div className="manage-head"><Tags size={20} aria-hidden="true" /><h2>{t.catTitle}</h2></div>
+            <p>{t.catHint}</p>
+            <div className="form"><input value={name} onChange={(event) => setName(event.target.value)} placeholder={lang === 'ko' ? '카테고리 이름' : 'Category name'} /><input value={exts} onChange={(event) => setExts(event.target.value)} placeholder="pdf,xlsx" /><button onClick={addCategory}>{t.add}</button></div>
+            {cats.map((category, index) => <div className="card category-card" key={`${category.name}-${index}`}><b>{category.name}</b><span>.{category.extensions.join(', .')}</span><label><input type="checkbox" checked={category.enabled} onChange={() => setCats((previous) => previous.map((item, itemIndex) => itemIndex === index ? { ...item, enabled: !item.enabled } : item))} />{category.enabled ? 'ON' : 'OFF'}</label><button className="danger-action" onClick={() => removeCategory(index)}><Trash2 size={14} />{lang === 'ko' ? '삭제' : 'Remove'}</button></div>)}
+          </section>
+          <section className="manage-card">
+            <div className="manage-head"><ListFilter size={20} aria-hidden="true" /><h2>{lang === 'ko' ? '파일명 규칙 (IF → THEN)' : 'Filename rules (IF → THEN)'}</h2></div>
+            <p>{lang === 'ko' ? '파일명에 키워드가 포함되면 지정 카테고리를 우선 적용합니다.' : 'A matching keyword takes precedence and routes the file to the chosen category.'}</p>
+            <div className="form"><input value={ruleKeyword} onChange={(event) => setRuleKeyword(event.target.value)} placeholder={lang === 'ko' ? '키워드 예: 영수증' : 'Keyword, e.g. receipt'} /><input value={ruleCategory} onChange={(event) => setRuleCategory(event.target.value)} placeholder={lang === 'ko' ? '대상 폴더' : 'Destination category'} /><button onClick={addRule}>{lang === 'ko' ? '규칙 추가' : 'Add rule'}</button></div>
+            {rules.map((rule, index) => <div className="card rule-card" key={`${rule.keyword}-${index}`}><span>IF <b>{rule.keyword}</b> → THEN <b>{rule.category}</b></span><button className="danger-action" onClick={() => removeRule(index)}><Trash2 size={14} />{lang === 'ko' ? '삭제' : 'Remove'}</button></div>)}
+          </section>
+          <section className="manage-card manage-wide">
+            <div className="manage-head"><Ban size={20} aria-hidden="true" /><h2>{t.exceptions}</h2></div>
+            <p>{t.exceptionHint}</p>
+            <div className="form"><input value={excludedDraft} onChange={(event) => setExcludedDraft(event.target.value)} placeholder={lang === 'ko' ? '예: node_modules 또는 .env' : 'e.g. node_modules or .env'} /><button onClick={addExclusion}>{t.addException}</button></div>
+            {[...excludedPaths.map((value) => ({ value, kind: 'path' })), ...excludedExtensions.map((value) => ({ value: `.${value}`, kind: 'extension' }))].map((item) => <div className="card rule-card" key={`${item.kind}-${item.value}`}><span>{item.kind === 'path' ? '📁' : '✦'} {item.value}</span><button className="danger-action" onClick={() => item.kind === 'path' ? setExcludedPaths((previous) => previous.filter((value) => value !== item.value)) : setExcludedExtensions((previous) => previous.filter((value) => `.${value}` !== item.value))}><Trash2 size={14} />{lang === 'ko' ? '삭제' : 'Remove'}</button></div>)}
+          </section>
+        </div>}
+
+        {panel === 'duplicates' && <>
+          <div className="manage-head"><Copy size={20} aria-hidden="true" /><h2>{t.duplicates}</h2></div><p>{lang === 'ko' ? '완전히 동일한 파일만 표시합니다. 선택한 파일은 확인 후 휴지통으로 보낼 수 있습니다.' : 'Only byte-identical files are shown. Selected files can be moved to the Recycle Bin after confirmation.'}</p>
+          {scanPanel === 'duplicates' ? <Loading text={t.scanning} /> : duplicates.length ? <>
+            <div className="keep-bar">
+              <label className="keep-field">{lang === 'ko' ? '남길 기준' : 'Keep'}
+                <select value={keepCriterion} onChange={(event) => { setKeepCriterion(event.target.value as KeepCriterion); setKeepApplied(false); }}>
+                  {(Object.keys(criterionLabels) as KeepCriterion[]).map((key) => <option key={key} value={key}>{criterionLabels[key][lang === 'ko' ? 0 : 1]}</option>)}
+                </select>
+              </label>
+              {keepCriterion === 'folder' && <label className="keep-field">{lang === 'ko' ? '폴더' : 'Folder'}
+                <select value={keepFolder} onChange={(event) => { setKeepFolder(event.target.value); setKeepApplied(false); }}>
+                  <option value="">{lang === 'ko' ? '폴더 선택…' : 'Choose a folder…'}</option>
+                  {keepFolders.map((folder) => <option key={folder} value={folder}>{shown(folder)}</option>)}
+                </select>
+              </label>}
+              <button className="secondary-action" onClick={applyKeepCriterion} disabled={busy || keepNeedsFolder}>{lang === 'ko' ? '선택 적용' : 'Apply'}</button>
+              <span className="keep-sum">{lang === 'ko' ? `${duplicateSelection.length}개 선택 · ${(duplicateSavedBytes / 1024 / 1024).toFixed(1)} MB 절약` : `${duplicateSelection.length} selected · ${(duplicateSavedBytes / 1024 / 1024).toFixed(1)} MB saved`}</span>
+              <span className="keep-spacer" />
+              <button className="secondary-action danger-action" onClick={() => void recycleSelected(duplicateSelection)} disabled={busy || !duplicateSelection.length}><Trash2 size={15} /> {t.recycle} ({duplicateSelection.length})</button>
+            </div>
+            <div className="keep-note">{IS_MOBILE
+              ? (lang === 'ko' ? `각 그룹의 파일 1개는 항상 남습니다 · 보낸 파일은 ${trashPlace(lang)} 폴더에서 되살리거나 완전히 지울 수 있습니다` : `One file of each group always stays · Removed files wait in the ${trashPlace(lang)} folder, where you can restore or delete them`)
+              : (lang === 'ko' ? '각 그룹의 파일 1개는 항상 남습니다 · 휴지통으로 보낸 파일은 Windows 휴지통에서 복원할 수 있습니다' : 'One file of each group always stays · Files sent to the Recycle Bin can be restored from Windows')}</div>
+            {duplicates.map((group, index) => {
+              const files = groupFiles(group);
+              const choice = keepApplied && !keepNeedsFolder ? chooseKeeper(files, keepCriterion, keepFolder) : null;
+              return <div className="card keep-group" key={`${group.hash}-${index}`}>
+                <div className="keep-head"><b>{duplicateGroupTitle(group.filePaths.length, group.reclaimableBytes, lang)}</b><span className="muted">SHA-256 {group.hash.slice(0, 8)}…{group.hash.slice(-4)}</span></div>
+                {files.map((file) => {
+                  const remove = duplicateSelection.includes(file.path);
+                  const dir = dirname(file.path);
+                  return <label className={`keep-row ${remove ? 'remove' : 'keep'}`} key={file.path}>
+                    <input type="checkbox" checked={remove} onChange={() => setDuplicateSelection((previous) => previous.includes(file.path) ? previous.filter((item) => item !== file.path) : [...previous, file.path])} />
+                    <span className="keep-path" title={file.path}><span className="keep-dir">{shown(dir)}{dir ? separatorOf(dir) : ''}</span><b>{basename(file.path)}</b></span>
+                    <span className="keep-meta">{lang === 'ko' ? '수정' : 'Modified'} {formatDay(file.modifiedSecs)} · {formatBytes(group.sizeBytes)}</span>
+                    <span className={`keep-badge ${remove ? 'remove' : 'keep'}`}>{remove ? (lang === 'ko' ? '삭제 예정' : 'To delete') : (lang === 'ko' ? '보존' : 'Keep')}</span>
+                  </label>;
+                })}
+                {choice?.tie && <div className="keep-tie"><i>{lang === 'ko' ? '확인 필요' : 'Check'}</i>{lang === 'ko' ? '수정 날짜가 같아 경로 순서로 정했습니다. 보존할 파일을 직접 골라 주세요.' : 'The criterion could not tell these apart, so path order was used. Please pick the file to keep yourself.'}</div>}
+              </div>;
+            })}
+            <button className="secondary-action danger-action" onClick={() => void recycleSelected(duplicateSelection)} disabled={busy || !duplicateSelection.length}><Trash2 size={15} /> {t.recycle} ({duplicateSelection.length})</button>
+          </> : <Empty text={t.nothing} />}
+        </>}
+
+        {panel === 'large' && <>
+          <div className="manage-head"><HardDrive size={20} aria-hidden="true" /><h2>{t.large}</h2></div><p>{t.largeHint}</p><label className="threshold-field">{t.largeThreshold}<input type="number" min="1" step="1" value={largeThresholdMb} onChange={(event) => setLargeThresholdMb(event.target.value)} /></label>
+          {scanPanel === 'large' ? <Loading text={t.scanning} /> : largeFiles.length ? <div className="card-list">{largeFiles.map((file) => <div className="card compact-card" key={file.path}><b>{formatBytes(file.sizeBytes)}</b><span>{shown(file.path)}{isVideo(file.path) && <button className="edit-chip" onClick={() => openEditor(file.path)} disabled={busy}><Clapperboard size={14} /> {t.editShort}</button>}</span></div>)}</div> : <Empty text={t.nothing} />}
+        </>}
+
+        {panel === 'empty' && <>
+          <div className="manage-head"><FolderOpen size={20} aria-hidden="true" /><h2>{t.emptyFolders}</h2></div><p>{t.emptyHint}</p>
+          {scanPanel === 'empty' ? <Loading text={t.scanning} /> : emptyFolders.length ? <><div className="card-list">{emptyFolders.map((folder) => <label className="check-row card" key={folder}><input type="checkbox" checked={cleanupSelection.includes(folder)} onChange={() => setCleanupSelection((previous) => previous.includes(folder) ? previous.filter((item) => item !== folder) : [...previous, folder])} />{shown(folder)}</label>)}</div><button className="secondary-action" onClick={() => void recycleSelected(cleanupSelection)} disabled={busy || !cleanupSelection.length}><Trash2 size={15} /> {t.recycle} ({cleanupSelection.length})</button></> : <Empty text={t.nothing} />}
+        </>}
+
+        {panel === 'history' && <>
+          <div className="manage-head"><History size={20} aria-hidden="true" /><h2>{t.history}</h2></div>
+          {runs.length ? runs.map((run) => <div className="card" key={run.runId}><b>{runTitle(run)}</b><span>{shown(run.rootPath)}</span><span className="muted">{run.updatedAt ? new Date(run.updatedAt).toLocaleString() : ''} · {lang === 'ko' ? `제외 ${run.exclusionCount}개 · 오류 ${run.errorCount}개` : `${run.exclusionCount} exclusions · ${run.errorCount} errors`}</span><div className="card-actions">{run.executedCount > 0 && <button onClick={() => void openUndoPreview(run.runId)} disabled={busy}>{t.undo}</button>}<button className="danger-action" onClick={() => void removeRun(run)} disabled={busy}><Trash2 size={14} />{lang === 'ko' ? '기록 삭제' : 'Delete'}</button></div></div>) : <Empty text={t.nothing} />}
+        </>}
+
+        {panel === 'ai' && <>
+          <div className="panel-heading"><div><div className="manage-head"><Bot size={20} aria-hidden="true" /><h2>{t.aiTitle}</h2></div><p>{t.aiHint}</p></div><button className="icon-button" onClick={() => void refreshAiProviders()} disabled={busy} aria-label={t.retry}><RefreshCw size={18} /></button></div>
+          <div className="privacy-callout"><ShieldCheck size={19} /><span>{t.localOnly}</span></div>
+          <h3>{t.selected}</h3>
+          <div className="provider-grid">{aiProviders.map((provider) => <button className={`provider-card ${selectedAi === provider.id ? 'selected' : ''}`} key={provider.id} onClick={() => { setSelectedAi(provider.id); setAiKeyDraft(''); setAiModelOptions([]); }}><span className="provider-name"><Bot size={17} /> {provider.displayName}</span><span className="provider-state">{providerStatus(provider.id, provider.keyPresent, provider.available, lang)}</span></button>)}</div>
+          {selectedProvider && <div className="ai-editor"><div className="ai-editor-title"><h3>{selectedProvider.displayName}</h3>{selectedProvider.id === 'ollama' && <span className={selectedProvider.available ? 'status-good' : 'status-muted'}>{selectedProvider.endpoint}</span>}</div>
+            {selectedProvider.id !== 'ollama' && <label className="field-label">{t.apiKey}<input type="password" value={aiKeyDraft} onChange={(event) => setAiKeyDraft(event.target.value)} placeholder={selectedProvider.keyPresent ? '••••••••••••••••' : 'sk-…'} autoComplete="new-password" /></label>}
+            <label className="field-label">{t.model}{selectedProvider.id === 'ollama' && selectedProvider.ollamaModels.length ? <select value={aiModelDraft} onChange={(event) => setAiModelDraft(event.target.value)}>{selectedProvider.ollamaModels.map((model) => <option value={model} key={model}>{model}</option>)}</select> : <><input value={aiModelDraft} onChange={(event) => setAiModelDraft(event.target.value)} placeholder={selectedProvider.model} list="ai-model-options" /><datalist id="ai-model-options">{aiModelOptions.map((model) => <option value={model} key={model} />)}</datalist></>}<small>{t.modelHint}</small>{selectedProvider.id !== 'ollama' && selectedProvider.keyPresent && <button type="button" className="secondary-action" onClick={() => void loadAiModels()} disabled={busy}>{lang === 'ko' ? '사용 가능한 모델 불러오기' : 'Load available models'}</button>}</label>
+            <div className="ai-actions"><button onClick={() => void saveAiProvider()} disabled={busy || (selectedProvider.id !== 'ollama' && !aiKeyDraft && !selectedProvider.keyPresent)}><CheckCircle2 size={16} /> {t.save}</button><button onClick={() => void testAiProvider()} disabled={busy || (selectedProvider.id !== 'ollama' && !selectedProvider.keyPresent && !aiKeyDraft)}><RefreshCw size={16} /> {t.test}</button>{selectedProvider.id !== 'ollama' && selectedProvider.keyPresent && <button className="danger-action" onClick={() => void removeAiKey()} disabled={busy}><Trash2 size={16} /> {t.removeKey}</button>}</div>
+            {selectedProvider.id !== 'ollama' && (IS_MOBILE
+              // A link would replace the app inside its WebView; show the address to open in a browser.
+              ? <p className="registration-link"><ExternalLink size={15} /> {t.getKey}: <span className="selectable">{selectedProvider.registrationUrl}</span></p>
+              : <a className="registration-link" href={selectedProvider.registrationUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} /> {t.getKey}</a>)}
+            {selectedProvider.id === 'ollama' && <p className="ollama-help"><Clock3 size={15} /> {selectedProvider.ollamaModels.length ? `${t.ollamaModels}: ${selectedProvider.ollamaModels.join(', ')}` : t.ollamaMissing}</p>}
+            {aiMessage && <p className="inline-message">{aiMessage}</p>}
+          </div>}
+          {aiResult && <div className="ai-results">
+            <div className="ai-results-heading"><h3>{t.aiResults}</h3><span className="muted">{t.requestCount}: {aiResult.requestCount}</span></div>
+            {aiResult.proposedCategories.length > 0 && <p className="new-category-note">{t.newCategory}: {aiResult.proposedCategories.join(', ')}</p>}
+            <div className="suggestion-list">{aiResult.suggestions.map((suggestion) => <div className={`suggestion ${suggestion.needsReview ? 'needs-review' : ''}`} key={suggestion.id}>
+              <input type="checkbox" checked={approvedAiIds.includes(suggestion.id)} onChange={() => setApprovedAiIds((previous) => previous.includes(suggestion.id) ? previous.filter((id) => id !== suggestion.id) : [...previous, suggestion.id])} />
+              <div><b>{plan?.actions[suggestion.id] ? basename(plan.actions[suggestion.id].sourcePath) : `#${suggestion.id}`}</b><span className="suggestion-category">→ {suggestion.category} · {(suggestion.confidence * 100).toFixed(0)}%</span><small>{suggestion.needsReview ? `${t.reviewRequired}: ` : ''}{suggestion.reason}{suggestion.isNewCategory ? ` · ${t.newCategory}` : ''}</small></div>
+            </div>)}</div>
+            <button className="primary-action" onClick={() => void applyAiSuggestions()} disabled={busy || !approvedAiIds.length}><CheckCircle2 size={16} /> {t.applySuggestions}</button>
+          </div>}
+        </>}
+      </section>}
+
+      {browser && <div className="modal-backdrop" role="presentation"><div className="update-modal folder-browser" role="dialog" aria-modal="true" aria-labelledby="browser-title">
+        <button className="modal-close" onClick={() => setBrowser(null)} aria-label={t.close}><X size={22} /></button>
+        <h2 id="browser-title">{browseMode === 'video' ? t.editTitle : t.browseTitle}</h2>
+        <div className="browser-path">
+          <button className="secondary-action" onClick={() => browser.parent && void browse(browser.parent)} disabled={!browser.parent}><CornerLeftUp size={18} /> {t.browseUp}</button>
+          <code>{shown(browser.path)}</code>
+        </div>
+        <div className="browser-list">
+          {browser.folders.length ? browser.folders.map((name) => {
+            const child = `${browser.path}${separatorOf(browser.path)}${name}`;
+            return <button key={name} className="browser-folder" onClick={() => void browse(child)}><FolderOpen size={20} aria-hidden="true" /><span>{name}</span></button>;
+          }) : browseMode === 'folder' && <p className="muted">{t.browseEmpty}</p>}
+          {browseMode === 'video' && browser.files.filter((file) => isVideo(file.name)).map((file) => <button key={file.name} className="browser-folder browser-video" onClick={() => openEditor(`${browser.path}${separatorOf(browser.path)}${file.name}`)}><Clapperboard size={20} aria-hidden="true" /><span>{file.name}<small>{formatBytes(file.sizeBytes)}</small></span></button>)}
+          {browseMode === 'video' && !browser.folders.length && !browser.files.some((file) => isVideo(file.name)) && <p className="muted">{t.editEmpty}</p>}
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-action" onClick={() => setBrowser(null)}><X size={16} /> {t.cancel}</button>
+          {browseMode === 'folder' && <button className="primary-action" onClick={() => pickBrowsed(browser.path)} disabled={!browser.parent}><CheckCircle2 size={16} /> {multiRoot ? t.browseAdd : t.browseHere}</button>}
+        </div>
+      </div></div>}
+
+      {editing && <VideoEditor path={editing} lang={lang} onClose={() => setEditing(null)} />}
+
+      {undoPreview && <div className="modal-backdrop" role="presentation"><div className="update-modal undo-modal" role="dialog" aria-modal="true" aria-labelledby="undo-title"><button className="modal-close" onClick={() => setUndoPreview(null)} disabled={busy} aria-label={t.cancel}><X size={18} /></button><Undo2 size={30} className="modal-icon" /><h2 id="undo-title">{t.undoPreview}</h2><p>{lang === 'ko' ? '실행된 파일만 원래 위치로 복원합니다. 원래 위치에 새 파일이 있으면 덮어쓰지 않고 충돌로 기록합니다.' : 'Only files from this run are restored. A newer file at the original path is never overwritten and is reported as a conflict.'}</p><div className="undo-toolbar"><label className="undo-all"><input type="checkbox" checked={undoRows.size === undoableRows(undoPreview).length} ref={(element) => { if (element) element.indeterminate = undoRows.size > 0 && undoRows.size < undoableRows(undoPreview).length; }} onChange={() => setUndoRows(undoRows.size === undoableRows(undoPreview).length ? new Set() : new Set(undoableRows(undoPreview)))} />{lang === 'ko' ? '전체 선택' : 'Select all'}</label><strong>{lang === 'ko' ? `${undoRows.size}/${undoableRows(undoPreview).length}개 선택` : `${undoRows.size}/${undoableRows(undoPreview).length} selected`}</strong></div><div className="release-notes undo-list">{undoableRows(undoPreview).map((row) => { const action = undoPreview.actions[row]; return <label className="undo-row" key={`${action.sourcePath}-${row}`}><input type="checkbox" checked={undoRows.has(row)} onChange={() => setUndoRows((previous) => { const next = new Set(previous); if (next.has(row)) next.delete(row); else next.add(row); return next; })} /><span title={`${action.destinationPath} → ${action.sourcePath}`}>{basename(action.sourcePath)}<small>{shown(action.destinationPath)} → {shown(action.sourcePath)}</small></span></label>; })}</div><div className="modal-actions"><button className="primary-action" onClick={() => void undo(undoPreview)} disabled={busy || undoRows.size === 0}><Undo2 size={16} /> {lang === 'ko' ? `선택한 ${undoRows.size}개 되돌리기` : `Undo ${undoRows.size} selected`}</button><button className="secondary-action" onClick={() => setUndoPreview(null)} disabled={busy}><X size={16} /> {t.cancel}</button></div></div></div>}
+
+      {updateModal && updateDialogState !== 'idle' && <div className="modal-backdrop" role="presentation"><div className="update-modal" role="dialog" aria-modal="true" aria-labelledby="update-title"><button className="modal-close" onClick={dismissUpdateModal} disabled={busy} aria-label={t.close}><X size={18} /></button><Download size={30} className="modal-icon" /><h2 id="update-title">{t.updateTitle}</h2>
+        {updateDialogState === 'loading' && <div className="update-state update-state-loading"><RefreshCw size={20} className="spin" /><p>{t.updateLoading}</p></div>}
+        {updateDialogState === 'available' && pendingUpdate && <><div className="version-line"><span>{t.currentVersion}: {pendingUpdate.currentVersion}</span><span>→</span><strong>{t.newVersion}: {pendingUpdate.version}</strong></div>{pendingUpdate.date && <p className="muted">{pendingUpdate.date}</p>}<div className="release-notes">{pendingUpdate.body || (lang === 'ko' ? '릴리즈 노트가 제공되지 않았습니다.' : 'No release notes were provided.')}</div>{updateProgress && <p className="update-progress"><RefreshCw size={15} /> {updateProgress}</p>}<div className="modal-actions"><button className="primary-action" onClick={() => void installUpdate()} disabled={busy}><Download size={16} /> {t.installNow}</button><button className="secondary-action" onClick={dismissUpdateModal} disabled={busy}><Clock3 size={16} /> {t.installLater}</button></div></>}
+        {updateDialogState === 'latest' && <><div className="version-line"><span>{t.currentVersion}: {APP_VERSION}</span><strong className="status-good">{t.latest}</strong></div><p>{t.latest}</p><div className="modal-actions"><button className="secondary-action" onClick={dismissUpdateModal}><X size={16} /> {t.close}</button><button className="primary-action" onClick={() => void checkForUpdate(true)} disabled={busy}><RefreshCw size={16} /> {t.retry}</button></div></>}
+        {updateDialogState === 'error' && <><div className="version-line"><span>{t.currentVersion}: {APP_VERSION}</span><strong className="status-error">{t.updateErrorTitle}</strong></div><p className="inline-message">{updateError || t.updateErrorFallback}</p><div className="modal-actions"><button className="secondary-action" onClick={dismissUpdateModal}><X size={16} /> {t.close}</button><button className="primary-action" onClick={() => void checkForUpdate(true)} disabled={busy}><RefreshCw size={16} /> {t.retry}</button></div></>}
+      </div></div>}
+    </main>
+  );
+}
+
+function Empty({ text }: { text: string }) {
+  return <div className="empty"><FolderTree size={36} /><p>{text}</p></div>;
+}
+
+/** Row numbers of the moves in a run that are still in place and can be undone. */
+function undoableRows(run: Plan): number[] {
+  return run.actions.flatMap((action, index) => (action.status === 'executed' ? [index] : []));
+}
+
+const TAB_ICONS: Record<Tab, LucideIcon> = { files: FolderOpen, organize: FolderTree, manage: SlidersHorizontal, safety: ShieldCheck };
+
+/** One icon per known folder (Windows or Galaxy Tab); anything unknown keeps the generic folder. */
+const FOLDER_ICONS: Record<string, LucideIcon> = {
+  desktop: Monitor,
+  downloads: Download,
+  documents: FileText,
+  pictures: ImageIcon,
+  videos: Film,
+  music: Music,
+  camera: Camera,
+  screenshots: Tablet,
+};
+
+/** A checkbox shown as an icon chip. The real input stays in the page (visually hidden), so keyboard and screen readers work as before. */
+function ToggleChip({ icon: Icon, checked, onChange, label }: { icon: LucideIcon; checked: boolean; onChange: (next: boolean) => void; label: string }) {
+  return (
+    <label className={`toggle-chip ${checked ? 'on' : ''}`}>
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <Icon size={16} aria-hidden="true" />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function ProgressBar({ progress, lang, onCancel }: { progress: ProgressInfo; lang: 'ko' | 'en'; onCancel: () => void }) {
+  const labels: Record<ProgressInfo['phase'], [string, string]> = {
+    scan: ['폴더를 읽는 중', 'Reading folders'],
+    quick: ['같은 크기의 파일을 빠르게 비교하는 중', 'Comparing same-size files'],
+    hash: ['파일 내용을 비교하는 중', 'Comparing file contents'],
+    move: ['파일을 이동하는 중', 'Moving files'],
+  };
+  const label = labels[progress.phase][lang === 'ko' ? 0 : 1];
+  const known = progress.total > 0;
+  const percent = progressPercent(progress.done, progress.total) ?? 0;
+  const count = progress.phase === 'hash'
+    ? `${formatBytes(progress.done)} / ${formatBytes(progress.total)}`
+    : known ? `${progress.done} / ${progress.total}` : `${progress.done}`;
+  return (
+    <div className="progress-card" role="status" aria-live="polite">
+      <div className="progress-head"><b>{label}</b><span>{known ? `${percent}% · ` : ''}{count}</span></div>
+      {known ? <progress value={progress.done} max={progress.total} /> : <progress />}
+      <small className="progress-current">{progress.current}</small>
+      <button className="secondary-action" onClick={onCancel}>{lang === 'ko' ? '취소' : 'Cancel'}</button>
+    </div>
+  );
+}
+
+function Loading({ text }: { text: string }) {
+  return <div className="empty"><RefreshCw size={36} className="spin" /><p>{text}</p></div>;
+}
