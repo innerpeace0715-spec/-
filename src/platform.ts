@@ -13,9 +13,12 @@ export const IS_IOS = PLATFORM ? PLATFORM === 'ios' : /iPad|iPhone|iPod/.test(na
 export const IS_MOBILE = IS_ANDROID || IS_IOS;
 /**
  * Every U-file build (Windows too) keeps the user's files on the device: no
- * AI providers and no self-update, so nothing ever opens a connection.
+ * cloud AI and no self-update. The desktop keeps FileMoa's AI suggestions
+ * through Ollama running on the same computer.
  */
 export const LOCAL_ONLY = true;
+/** AI suggestions: Ollama on this computer only, so the desktop alone has them. */
+export const LOCAL_AI = !IS_MOBILE;
 
 type AndroidBridge = { hasAllFilesAccess(): boolean; openAllFilesAccessSettings(): void };
 /** Added by MainActivity.kt; missing on the desktop and the iPad. */
@@ -23,8 +26,10 @@ export function androidBridge(): AndroidBridge | undefined {
   return (window as unknown as { FileMoaAndroid?: AndroidBridge }).FileMoaAndroid;
 }
 
-/** Tablet WebViews have no reliable `confirm()`, so ask through the dialog plugin there. */
+/**
+ * Ask through the dialog plugin: tablet WebViews have no reliable `confirm()`,
+ * and on Windows it stopped answering while the editor's frame was open.
+ */
 export async function confirmBox(message: string, lang: 'ko' | 'en'): Promise<boolean> {
-  if (!IS_MOBILE) return confirm(message);
   return ask(message, { title: 'U-file', kind: 'warning', okLabel: lang === 'ko' ? '확인' : 'OK', cancelLabel: lang === 'ko' ? '취소' : 'Cancel' });
 }

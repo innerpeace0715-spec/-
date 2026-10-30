@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { ArrowLeft, CheckCircle2, Clapperboard, RefreshCw } from 'lucide-react';
-import { confirmBox } from './platform';
 import { saveBytes } from './save';
 import { basename, friendlyPath } from './utils';
 
@@ -106,6 +105,7 @@ export default function VideoEditor({ path, lang, onClose }: { path: string; lan
   const [status, setStatus] = useState(lang === 'ko' ? '편집기를 여는 중…' : 'Starting the editor…');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState<string[]>([]);
+  const [confirming, setConfirming] = useState(false);
   // Set once the editor is known to be bundled, so a build without it never frames another page.
   const [source, setSource] = useState<string | null>(null);
   const name = basename(path);
@@ -185,16 +185,19 @@ export default function VideoEditor({ path, lang, onClose }: { path: string; lan
     };
   }, [path]);
 
-  async function close() {
-    if (await confirmBox(lang === 'ko'
-      ? '편집 화면을 닫을까요? 저장하지 않은 편집 내용은 사라집니다.\n(편집기의 내보내기·저장으로 만든 파일은 이미 기기에 저장되어 있습니다.)'
-      : 'Close the editor? Unsaved edits are lost.\n(Files you exported or saved in the editor are already on the device.)', lang)) onClose();
+  /**
+   * Back to U-file. Asked on the page itself: a native confirm() from a
+   * window holding the editor's frame did not answer clicks on Windows.
+   */
+  function close() {
+    if (error) onClose();
+    else setConfirming(true);
   }
 
   return (
     <div className="editor-screen" role="dialog" aria-modal="true" aria-label={lang === 'ko' ? '영상 수정' : 'Edit video'}>
       <header className="editor-bar">
-        <button className="secondary-action" onClick={() => void close()}><ArrowLeft size={20} /> U-file</button>
+        <button className="icon-action editor-back" onClick={close} aria-label={lang === 'ko' ? 'U-file로 돌아가기' : 'Back to U-file'} title={lang === 'ko' ? 'U-file로 돌아가기' : 'Back to U-file'}><ArrowLeft size={20} /></button>
         <div className="editor-title">
           <Clapperboard size={20} aria-hidden="true" />
           <b>{name}</b>
@@ -202,6 +205,11 @@ export default function VideoEditor({ path, lang, onClose }: { path: string; lan
         </div>
         {status && <span className="editor-status"><RefreshCw size={16} className="spin" /> {status}</span>}
       </header>
+      {confirming && <div className="editor-confirm" role="alertdialog" aria-label={lang === 'ko' ? '편집 닫기' : 'Close the editor'}>
+        <span>{lang === 'ko' ? '편집을 닫을까요? 저장하지 않은 편집은 사라집니다. 내보낸 파일은 이미 저장되어 있습니다.' : 'Close the editor? Unsaved edits are lost; exported files are already saved.'}</span>
+        <button className="primary-action" onClick={onClose}>{lang === 'ko' ? '닫기' : 'Close'}</button>
+        <button className="secondary-action" onClick={() => setConfirming(false)}>{lang === 'ko' ? '계속 편집' : 'Keep editing'}</button>
+      </div>}
       {error && <p className="notice editor-message">{lang === 'ko' ? '편집기 오류: ' : 'Editor error: '}{error}</p>}
       {saved.length > 0 && <p className="inline-message editor-message"><CheckCircle2 size={16} /> {lang === 'ko' ? '기기에 저장했습니다: ' : 'Saved to the device: '}{saved.map((file) => friendlyPath(file, lang)).join(', ')}</p>}
       {source ? <iframe key={source} ref={frame} className="editor-frame" src={source} title="FilmCraft" allow="fullscreen; autoplay" /> : <div className="editor-frame" />}

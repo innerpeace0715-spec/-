@@ -166,6 +166,8 @@ struct FolderListing {
 struct FileEntry {
     name: String,
     size_bytes: u64,
+    /// Last change, for the file browser's date column.
+    modified_secs: Option<i64>,
 }
 
 /// The sub-folders of `path` for the in-app folder browser. Android has no
@@ -198,6 +200,11 @@ fn list_folders(app: AppHandle, path: Option<String>) -> Result<FolderListing, S
             Ok(metadata) if metadata.is_file() => files.push(FileEntry {
                 name,
                 size_bytes: metadata.len(),
+                modified_secs: metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .and_then(|age| i64::try_from(age.as_secs()).ok()),
             }),
             _ => {}
         }
@@ -215,6 +222,71 @@ fn list_folders(app: AppHandle, path: Option<String>) -> Result<FolderListing, S
         folders,
         files,
     })
+}
+
+/// The places the file browser lists beside the usual folders: the drives on
+/// Windows, the file system root on other desktops, the storage root on a
+/// tablet.
+#[tauri::command]
+fn list_drives(app: AppHandle) -> Result<Vec<String>, String> {
+    if cfg!(windows) {
+        return Ok((b'A'..=b'Z')
+            .map(|letter| format!("{}:\\", letter as char))
+            .filter(|drive| std::path::Path::new(drive).is_dir())
+            .collect());
+    }
+    if cfg!(mobile) {
+        return Ok(vec![browse_root(&app)?.display().to_string()]);
+    }
+    Ok(vec!["/".into()])
+}
+
+/// Open a file with its default program, or show it selected in the
+/// system file manager (`reveal`). Desktop only; nothing leaves the computer.
+#[tauri::command]
+fn open_path(path: String, reveal: bool) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    if !path.exists() {
+        return Err(format!(
+            "파일을 찾을 수 없습니다: {} / not found",
+            path.display()
+        ));
+    }
+    #[cfg(windows)]
+    let mut command = {
+        use std::os::windows::process::CommandExt;
+        let mut command = std::process::Command::new("explorer.exe");
+        if reveal {
+            // Explorer wants the quotes after the comma, not around the whole argument.
+            command.raw_arg(format!("/select,\"{}\"", path.display()));
+        } else {
+            command.arg(&path);
+        }
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = if cfg!(target_os = "macos") {
+        let mut command = std::process::Command::new("open");
+        if reveal {
+            command.arg("-R");
+        }
+        command.arg(&path);
+        command
+    } else if cfg!(mobile) {
+        return Err("태블릿에서는 지원하지 않습니다 / not available on the tablet".into());
+    } else {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(if reveal {
+            path.parent().unwrap_or(&path)
+        } else {
+            &path
+        });
+        command
+    };
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("열 수 없습니다 / cannot open: {e}"))
 }
 
 fn startup_candidate<I>(mut arguments: I) -> Result<Option<PathBuf>, String>
@@ -649,6 +721,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             known_folders,
             list_folders,
+            list_drives,
+            open_path,
             storage_info,
             selftest_log,
             media::read_media,

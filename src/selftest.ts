@@ -185,6 +185,20 @@ export async function runSelfTest(openEditor: (path: string) => void): Promise<v
   });
   else steps.push({ name: 'export from FilmCraft and save to the tablet', ok: false, detail: 'skipped: the editor did not open' });
 
+  if (editorOpened) await step('go back to U-file from the editor', async () => {
+    const press = (selector: string) => {
+      const button = document.querySelector<HTMLButtonElement>(selector);
+      expect(button !== null, `no ${selector}`);
+      button!.click();
+    };
+    press('.editor-back');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    press('.editor-confirm .primary-action');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(document.querySelector('.editor-screen') === null, 'the editor is still open');
+    return 'back on the U-file screen';
+  });
+
   log('writing the report');
   const report = { ok: steps.every((entry) => entry.ok), userAgent: navigator.userAgent, steps, finishedAt: new Date().toISOString() };
   const bytes = new TextEncoder().encode(JSON.stringify(report, null, 2));

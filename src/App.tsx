@@ -48,8 +48,9 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import appIcon from './assets/app-icon.png';
-import { IS_ANDROID, IS_IOS, IS_MOBILE, LOCAL_ONLY, androidBridge, confirmBox } from './platform';
+import { IS_ANDROID, IS_IOS, IS_MOBILE, LOCAL_AI, LOCAL_ONLY, androidBridge, confirmBox } from './platform';
 import VideoEditor from './VideoEditor';
+import FileBrowser, { type Place } from './FileBrowser';
 import { runSelfTest, selfTestRequested } from './selftest';
 import './styles.css';
 import { basename, chooseKeeper, cloudOnlyNotice as cloudOnlyMessage, decideOpenFolder, dirname, duplicateGroupTitle, formatBytes, formatDay, selectForRecycle, type KeepCriterion, isCancelledError, planSummary, progressPercent, providerStatus, requestCount, runTitle as runTitleText, shouldOpenUpdateModal, shouldUseStartupPath, type OpenFolderRequest, friendlyPath, separatorOf, underRoot, isVideo, VIDEO_EXTENSIONS } from './utils';
@@ -134,7 +135,7 @@ type AiResult = {
   failedCount?: number;
   failedMessage?: string | null;
 };
-type Tab = 'organize' | 'manage' | 'safety';
+type Tab = 'files' | 'organize' | 'manage' | 'safety';
 type Panel = 'plan' | 'categories' | 'duplicates' | 'history' | 'large' | 'empty' | 'ai';
 type ScanPanel = 'duplicates' | 'large' | 'empty' | null;
 type UpdateDialogState = 'idle' | 'loading' | 'available' | 'latest' | 'error';
@@ -143,7 +144,7 @@ const APP_VERSION = packageJson.version;
 
 const labels = {
   ko: {
-    organize: '정리', manage: '관리', safety: '안전', settings: '설정', folder: '폴더 선택',
+    files: '파일', organize: '정리', manage: '관리', safety: '안전', settings: '설정', folder: '폴더 선택',
     preview: '정리 미리보기', execute: '파일 이동', category: '사용자 카테고리', duplicates: '중복 파일 탐색',
     undo: '마지막 정리 되돌리기', history: '정리 기록', aiSettings: 'AI 설정', sub: '하위 폴더 포함',
     empty: '정리할 폴더를 선택하세요', nothing: '표시할 항목이 없습니다.', update: '업데이트 확인', language: 'English',
@@ -165,7 +166,7 @@ const labels = {
     permTitle: '파일 접근 권한이 필요합니다', permBody: 'Download·DCIM 같은 폴더의 파일을 정리하려면 "모든 파일에 대한 접근" 권한이 필요합니다. 설정에서 U-file을 허용한 뒤 돌아오세요.', permButton: '권한 설정 열기',
   },
   en: {
-    organize: 'Organize', manage: 'Manage', safety: 'Safety', settings: 'Settings', folder: 'Choose folder',
+    files: 'Files', organize: 'Organize', manage: 'Manage', safety: 'Safety', settings: 'Settings', folder: 'Choose folder',
     preview: 'Preview plan', execute: 'Move files', category: 'Custom categories', duplicates: 'Find duplicates',
     undo: 'Undo last run', history: 'Run history', aiSettings: 'AI settings', sub: 'Include subfolders',
     empty: 'Choose a folder to organize', nothing: 'Nothing to show yet.', update: 'Check updates', language: '한국어',
@@ -231,7 +232,10 @@ export default function App() {
     if (stored === 'ko' || stored === 'en') return stored;
     return navigator.language.toLowerCase().startsWith('ko') ? 'ko' : 'en';
   });
-  const [tab, setTab] = useState<Tab>('organize');
+  // U-file opens on its file browser, showing the last folder by itself.
+  const [tab, setTab] = useState<Tab>('files');
+  const [filesChanged, setFilesChanged] = useState(0);
+  const [previewOnOpen, setPreviewOnOpen] = useState(false);
   const [panel, setPanel] = useState<Panel>('plan');
   const [path, setPath] = useState('');
   const [paths, setPaths] = useState<string[]>([]);
@@ -422,6 +426,29 @@ export default function App() {
   function knownFolderLabel(id: string) {
     const key = id as keyof typeof t;
     return key in t ? t[key] : id;
+  }
+
+  const places: Place[] = knownFolders.map((folder) => ({ id: folder.id, path: folder.path, label: String(knownFolderLabel(folder.id)), icon: FOLDER_ICONS[folder.id] ?? FolderOpen }));
+
+  /** The folder on the file browser is what organize and manage work on, unless a preview is waiting. */
+  const followFolder = useRef((folder: string) => folder);
+  followFolder.current = (folder: string) => {
+    if (busy || pendingCount > 0 || paths.length > 1) return folder;
+    setPaths([folder]);
+    setPath(folder);
+    setPlan(null);
+    return folder;
+  };
+  const onBrowsedFolder = useMemo(() => (folder: string) => { followFolder.current(folder); }, []);
+
+  /** "정리" on the file browser: preview organizing the folder on screen. */
+  function organizeFolder(folder: string) {
+    setPaths([folder]);
+    setPath(folder);
+    setPlan(null);
+    setTab('organize');
+    setPanel('plan');
+    setPreviewOnOpen(true);
   }
 
   /** Run a long backend command and show its progress; the backend allows one at a time. */
@@ -765,7 +792,8 @@ export default function App() {
 
   async function refreshAiProviders() {
     try {
-      const providers = await invoke<AiProvider[]>('get_ai_provider_settings');
+      // The cloud providers would send file names off the device; only Ollama stays.
+      const providers = (await invoke<AiProvider[]>('get_ai_provider_settings')).filter((provider) => !LOCAL_ONLY || provider.id === 'ollama');
       setAiProviders(providers);
       const active = providers.find((provider) => provider.id === selectedAi) ?? providers[0];
       if (active) setAiModelDraft(active.model);
@@ -878,8 +906,8 @@ export default function App() {
   }
 
   useEffect(() => {
-    // No build has AI providers: U-file never sends anything off the device.
-    if (!LOCAL_ONLY) void refreshAiProviders();
+    // AI only through Ollama on this computer: nothing goes off the device.
+    if (LOCAL_AI) void refreshAiProviders();
     void invoke<KnownFolder[]>('known_folders').then(setKnownFolders).catch(() => undefined);
     if (IS_ANDROID) checkStorageAccess();
     // CI's emulator/simulator/Windows check of the installed app (src/selftest.ts).
@@ -940,7 +968,7 @@ export default function App() {
   useEffect(() => {
     let stop: (() => void) | undefined;
     let cancelled = false;
-    void listen<OpenFolderRequest>('open-folder', (event) => {
+    void listen<OpenFolderRequest>('open-folder', async (event) => {
       const { busy: isBusy, hasPreview, lang: language } = outside.current;
       const request = event.payload;
       const folder = request.path ?? '';
@@ -953,9 +981,9 @@ export default function App() {
           : `A task is running, so the folder was not changed. Open it again when it finishes: ${folder}`);
         return;
       }
-      if (decision === 'confirm' && !confirm(language === 'ko'
+      if (decision === 'confirm' && !(await confirmBox(language === 'ko'
         ? `현재 정리 미리보기를 버리고 "${folder}" 폴더로 바꿀까요?\n(아직 이동하지 않은 미리보기는 사라집니다.)`
-        : `Discard the current preview and switch to "${folder}"?\n(The preview that has not been run will be lost.)`)) return;
+        : `Discard the current preview and switch to "${folder}"?\n(The preview that has not been run will be lost.)`, language))) return;
       setTab('organize');
       setPanel('plan');
       setPlan(null);
@@ -993,6 +1021,18 @@ export default function App() {
     writeLocal('filemoa-date-basis', dateBasis);
     writeLocal('filemoa-large-threshold-mb', largeThresholdMb);
   }, [lang, cats, rules, excludedPaths, excludedExtensions, basis, mode, dateBasis, largeThresholdMb]);
+
+  // "정리" on the file browser previews at once, once the folder is set.
+  useEffect(() => {
+    if (!previewOnOpen || !path) return;
+    setPreviewOnOpen(false);
+    void makePlan();
+  }, [previewOnOpen, path]);
+
+  // After U-file moved or removed files, the browser reads its folder again.
+  useEffect(() => {
+    if (!busy) setFilesChanged((count) => count + 1);
+  }, [busy]);
 
   useEffect(() => {
     const provider = aiProviders.find((item) => item.id === selectedAi);
@@ -1039,7 +1079,7 @@ export default function App() {
         { key: 'folder', icon: FolderOpen, action: choose },
         { key: 'preview', icon: Search, action: makePlan, disabled: !path },
         { key: 'execute', icon: Play, action: execute, disabled: !plan || !plan.planId || !selectedCount },
-        ...(LOCAL_ONLY ? [] : [{ key: 'aiClassify', icon: Bot, action: runAiClassification, disabled: !plan || !plan.planId || !pendingCount }]),
+        ...(!LOCAL_AI ? [] : [{ key: 'aiClassify', icon: Bot, action: runAiClassification, disabled: !plan || !plan.planId || !pendingCount }]),
         { key: 'editFile', icon: Clapperboard, action: chooseVideo },
       ]
     : tab === 'manage'
@@ -1048,7 +1088,7 @@ export default function App() {
           { key: 'duplicates', icon: Copy, action: scanDuplicates, disabled: !path },
           { key: 'large', icon: Search, action: scanLargeFiles, disabled: !path },
           { key: 'emptyFolders', icon: FolderTree, action: scanEmptyFolders, disabled: !path },
-          ...(LOCAL_ONLY ? [] : [{ key: 'aiSettings', icon: Bot, action: () => setPanel('ai') }]),
+          ...(!LOCAL_AI ? [] : [{ key: 'aiSettings', icon: Bot, action: () => setPanel('ai') }]),
         ]
       : [
           { key: 'undo', icon: Undo2, action: () => void openUndoPreview(), disabled: !runs.some((run) => run.executedCount > 0) },
@@ -1075,7 +1115,7 @@ export default function App() {
       </header>
 
       <nav className="tabs">
-        {(['organize', 'manage', 'safety'] as Tab[]).map((item) => {
+        {(['files', 'organize', 'manage', 'safety'] as Tab[]).map((item) => {
           const TabIcon = TAB_ICONS[item];
           return <button className={tab === item ? 'active' : ''} onClick={() => selectTab(item)} key={item} aria-current={tab === item ? 'page' : undefined}><TabIcon size={17} aria-hidden="true" />{t[item]}</button>;
         })}
@@ -1087,7 +1127,9 @@ export default function App() {
         <button className="primary-action" onClick={() => androidBridge()?.openAllFilesAccessSettings()}>{t.permButton}</button>
       </div>}
 
-      <section className="ribbon">
+      {tab === 'files' && <FileBrowser lang={lang} places={places} busy={busy} refreshKey={filesChanged} onFolder={onBrowsedFolder} onOrganize={organizeFolder} onEdit={openEditor} />}
+
+      {tab !== 'files' && <section className="ribbon">
         <div className="ribbon-main">
           <div className="ribbon-actions">
             {ribbon.map(({ key, icon: Icon, action, disabled }) => <button key={key} onClick={() => void action()} disabled={busy || disabled}><Icon size={22} /><span>{t[key as keyof typeof t]}</span></button>)}
@@ -1111,12 +1153,12 @@ export default function App() {
           {knownFolders.map((folder) => <button className="quick-folder" key={folder.id} onClick={() => chooseKnownFolder(folder)} disabled={busy} title={folder.path}>{(() => { const FolderIcon = FOLDER_ICONS[folder.id] ?? FolderOpen; return <FolderIcon size={15} aria-hidden="true" />; })()}{knownFolderLabel(folder.id)}</button>)}
         </div>}
         <code className="ribbon-path" title={path || t.empty}>{paths.length ? paths.map(shown).join(' · ') : path || t.empty}</code>
-      </section>
+      </section>}
 
       {progress && <ProgressBar progress={progress} lang={lang} onCancel={() => void cancelOperation()} />}
       {notice && <p className="notice">{notice}</p>}
 
-      <section className="workspace">
+      {tab !== 'files' && <section className="workspace">
         {panel === 'plan' && <>
           <div className="manage-head"><ListChecks size={20} aria-hidden="true" /><h2>{t.plan}</h2></div>
           {plan ? <>
@@ -1239,7 +1281,7 @@ export default function App() {
             <button className="primary-action" onClick={() => void applyAiSuggestions()} disabled={busy || !approvedAiIds.length}><CheckCircle2 size={16} /> {t.applySuggestions}</button>
           </div>}
         </>}
-      </section>
+      </section>}
 
       {browser && <div className="modal-backdrop" role="presentation"><div className="update-modal folder-browser" role="dialog" aria-modal="true" aria-labelledby="browser-title">
         <button className="modal-close" onClick={() => setBrowser(null)} aria-label={t.close}><X size={22} /></button>
@@ -1285,7 +1327,7 @@ function undoableRows(run: Plan): number[] {
   return run.actions.flatMap((action, index) => (action.status === 'executed' ? [index] : []));
 }
 
-const TAB_ICONS: Record<Tab, LucideIcon> = { organize: FolderTree, manage: SlidersHorizontal, safety: ShieldCheck };
+const TAB_ICONS: Record<Tab, LucideIcon> = { files: FolderOpen, organize: FolderTree, manage: SlidersHorizontal, safety: ShieldCheck };
 
 /** One icon per known folder (Windows or Galaxy Tab); anything unknown keeps the generic folder. */
 const FOLDER_ICONS: Record<string, LucideIcon> = {

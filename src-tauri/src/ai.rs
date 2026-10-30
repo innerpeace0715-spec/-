@@ -22,11 +22,22 @@ use tauri::{AppHandle, Manager};
 const GEMINI_MODELS_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const OLLAMA_ENDPOINT: &str = "http://127.0.0.1:11434";
 const CONFIG_FILE: &str = "ai-providers.json";
-/// U-file never opens a connection on any platform (Windows, Galaxy Tab,
-/// iPad), so nothing about the user's files can leave the device. Android
-/// also has no INTERNET permission.
-fn http_client(_: Duration) -> Result<Client, String> {
-    Err("U-file은 파일 정보를 외부로 보내지 않습니다 / U-file sends nothing off the device".into())
+/// Nothing about the user's files leaves the device. The only AI U-file
+/// talks to is Ollama on this computer (127.0.0.1, never through a proxy),
+/// and only on the desktop; the cloud providers and the tablet builds get no
+/// client at all. Android also has no INTERNET permission.
+fn http_client(provider_id: &str, timeout: Duration) -> Result<Client, String> {
+    if provider_id != "ollama" || cfg!(any(target_os = "android", target_os = "ios")) {
+        return Err(
+            "U-file은 파일 정보를 외부로 보내지 않습니다(이 PC의 Ollama만 사용) / U-file sends nothing off the device (local Ollama only)"
+                .into(),
+        );
+    }
+    Client::builder()
+        .no_proxy()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| format!("네트워크 클라이언트를 만들 수 없습니다: {e}"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -423,7 +434,7 @@ fn setting_for(id: &str, stored: Option<&StoredProvider>) -> AiProviderSetting {
 }
 
 async fn ollama_status() -> OllamaStatus {
-    let client = match http_client(Duration::from_secs(2)) {
+    let client = match http_client("ollama", Duration::from_secs(2)) {
         Ok(client) => client,
         Err(error) => {
             return OllamaStatus {
@@ -550,7 +561,7 @@ pub fn remove_ai_provider_key(app: AppHandle, provider_id: String) -> Result<(),
 }
 
 async fn check_external_provider(id: &str, key: &str) -> Result<(), String> {
-    let client = http_client(Duration::from_secs(8))?;
+    let client = http_client(id, Duration::from_secs(8))?;
     let response = match id {
         "openai" => {
             client
@@ -788,7 +799,7 @@ async fn classify_batch(
         message: message.to_string(),
         wait: None,
     };
-    let client = http_client(Duration::from_secs(45)).map_err(BatchError::Fatal)?;
+    let client = http_client(provider_id, Duration::from_secs(45)).map_err(BatchError::Fatal)?;
     let missing_key =
         |name: &str| BatchError::Fatal(format!("{name} API 키가 저장되지 않았습니다."));
     let response = match provider_id {
@@ -1061,7 +1072,7 @@ pub async fn list_ai_models(app: AppHandle, provider_id: String) -> Result<Vec<S
     if legacy {
         upgrade_key_protection(&app, &provider_id, &key);
     }
-    let client = http_client(Duration::from_secs(10))?;
+    let client = http_client(&provider_id, Duration::from_secs(10))?;
     let request = match provider_id.as_str() {
         "openai" => client
             .get("https://api.openai.com/v1/models")
@@ -1146,8 +1157,12 @@ mod tests {
     }
 
     #[test]
-    fn no_build_can_open_a_connection() {
-        assert!(http_client(Duration::from_secs(1)).is_err());
+    fn only_the_local_ollama_gets_a_connection() {
+        for id in ["openai", "claude", "gemini", "anything"] {
+            assert!(http_client(id, Duration::from_secs(1)).is_err(), "{id}");
+        }
+        assert!(http_client("ollama", Duration::from_secs(1)).is_ok());
+        assert!(OLLAMA_ENDPOINT.starts_with("http://127.0.0.1:"));
     }
 
     #[cfg(windows)]
