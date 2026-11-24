@@ -1,26 +1,26 @@
-name: Build for Android
+name: Build for Android (HN)
 
+# 행님용 개조판 APK 빌드.
+# - 일반(Regular) APK만 빌드한다. FOSS·AAB·Play 업로드는 뺐다.
+# - SIGNING_KEY 시크릿이 없으면 저장소의 fallback-key.jks로 서명된다.
 on:
-  # Enable manual run
   workflow_dispatch:
   push:
-    tags:
-      - "**"
     branches:
       - "**"
-    paths:
-      - .github/workflows/android.yml
+    paths-ignore:
+      - "**.md"
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-android:
-    name: Build APK (${{ matrix.foss && 'FOSS' || 'Regular' }})
-    strategy:
-      fail-fast: false
-      matrix:
-        foss: [false, true]
+    name: Build APK
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     timeout-minutes: 60
     steps:
       - name: Checkout code
@@ -37,34 +37,20 @@ jobs:
           no-save-caches: true
 
       - name: Restore cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache@v6.1.0
         with:
           path: |
             .dart_tool/
             .flutter-plugins-dependencies
             build/
-            linux/flutter/ephemeral/
-            macos/Flutter/ephemeral/
             packages/**/.dart_tool/
             packages/**/.flutter-plugins-dependencies
             packages/**/pubspec.lock
-            windows/flutter/ephemeral/
             ~/.dartServer/
             ~/.dart-tool/
-          key: ${{ runner.OS }}-saber-${{ hashFiles('**/pubspec.yaml') }}
+          key: ${{ runner.OS }}-saber-hn-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: |
-            ${{ runner.OS }}-saber-
-
-      - name: Setup keystore
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-        if: ${{ env.SIGNING_KEY != '' }}
-        run: |
-          echo "${{ secrets.SIGNING_KEY }}" | base64 -d > android/android.keystore
-          echo "storePassword=${{ secrets.KEY_STORE_PASSWORD }}" > android/key.properties
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/key.properties
-          echo "keyAlias=${{ secrets.ALIAS }}" >> android/key.properties
-          echo "storeFile=../android.keystore" >> android/key.properties
+            ${{ runner.OS }}-saber-hn-
 
       - name: Setup Android build tools
         run: |
@@ -78,23 +64,15 @@ jobs:
       - name: Disable Flutter CLI animations
         run: flutter config --no-cli-animations
 
-      - run: ./patches/pre/remove_proprietary_dependencies.sh
-        if: matrix.foss
-      - run: patch pubspec.lock < patches/pre/pubspec-fdroid.lock.patch
-        if: matrix.foss
-
       - name: Build apk
-        run: flutter build apk
+        run: flutter build apk --dart-define=UPDATE_CHECK="false"
 
       - name: Rename apk
         id: rename_apk
         run: |
           buildName=$(grep -oP "(?<=buildName = ').*(?=')" lib/data/version.dart)
-          if [ "${{ matrix.foss }}" = "true" ]; then
-            apkName="Saber_FOSS_v${buildName}.apk"
-          else
-            apkName="Saber_v${buildName}.apk"
-          fi
+          shortSha=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          apkName="SaberHN_v${buildName}_${shortSha}.apk"
           echo "apkName=$apkName" >> $GITHUB_OUTPUT
 
           mkdir -p output
@@ -103,85 +81,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.foss && 'Saber-Android-FOSS' || 'Saber-Android' }}
+          name: SaberHN-Android
           path: output/${{ steps.rename_apk.outputs.apkName }}
-
-      - name: Upload to GitHub release
-        uses: svenstaro/upload-release-action@v2
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: output/${{ steps.rename_apk.outputs.apkName }}
-
-      - name: Build aab
-        if: ${{ matrix.foss == false }}
-        run: |
-          flutter build appbundle \
-            --dart-define=FLAVOR="Google Play" \
-            --dart-define=APP_STORE="Google Play" \
-            --dart-define=UPDATE_CHECK="false"
-
-          mkdir -p output
-          mv build/app/outputs/bundle/release/app-release.aab output/Saber.aab
-
-      - name: Upload artifact
-        if: ${{ matrix.foss == false }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: Saber-Android-PlayStore
-          path: output/Saber.aab
-
-  upload-to-play-store:
-    name: Upload to Play Store
-    runs-on: ubuntu-latest
-    needs: build-android
-    if: ${{ startsWith(github.ref, 'refs/tags/') }}
-    timeout-minutes: 10
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Download artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: Saber-Android-PlayStore
-          path: output
-
-      - name: Prepare whatsnew directory from metadata/*/changelogs
-        working-directory: ${{ github.workspace }}
-        run: |
-          # display changelogs for debugging
-          find metadata -name '*.txt'
-
-          mkdir -p whatsnew
-
-          # get current version code from lib/data/version.dart
-          VERSION_CODE=$(grep -oP '(?<=buildNumber = )\d+' lib/data/version.dart)
-
-          # copy changelogs of each language to whatsnew
-          for dir in metadata/*/changelogs; do
-              # get language code from directory name
-              # e.g. metadata/en-US/changelogs -> en-US
-              lang=${dir#metadata/}
-              lang=${lang%/changelogs}
-
-              # get original changelog file
-              original="$dir/$VERSION_CODE.txt"
-
-              if [ -f "$original" ]; then
-                # copy changelog file to whatsnew
-                cp "$original" "whatsnew/whatsnew-${lang}"
-              fi
-          done
-
-      - name: Upload to Play Store
-        uses: r0adkll/upload-google-play@v1
-        with:
-          serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_JSON }}
-          packageName: com.adilhanney.saber
-          releaseFiles: output/Saber.aab
-          track: production
-          status: completed
-          whatsNewDirectory: whatsnew
