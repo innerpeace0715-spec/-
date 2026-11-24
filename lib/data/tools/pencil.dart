@@ -8,9 +8,9 @@ class Pencil extends Pen {
   new()
     : super(
         name: t.editor.pens.pencil,
-        sizeMin: 1,
+        sizeMin: 0.5,
         sizeMax: 15,
-        sizeStep: 1,
+        sizeStep: 0.1,
         icon: pencilIcon,
         options: stows.lastPencilOptions.value,
         pressureEnabled: true,

@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:perfect_freehand/perfect_freehand.dart';
 import 'package:saber/components/canvas/_stroke.dart';
 import 'package:saber/data/editor/page.dart';
+import 'package:saber/data/hn/hn_tuning.dart';
 import 'package:saber/data/prefs.dart';
 import 'package:saber/data/tools/_tool.dart';
 import 'package:saber/data/tools/highlighter.dart';
@@ -27,9 +28,9 @@ class Pen extends Tool {
 
   new fountainPen()
     : name = t.editor.pens.fountainPen,
-      sizeMin = 1,
+      sizeMin = 0.5,
       sizeMax = 25,
-      sizeStep = 1,
+      sizeStep = 0.1,
       icon = fountainPenIcon,
       options = stows.lastFountainPenOptions.value,
       pressureEnabled = true,
@@ -38,9 +39,9 @@ class Pen extends Tool {
 
   new ballpointPen()
     : name = t.editor.pens.ballpointPen,
-      sizeMin = 1,
+      sizeMin = 0.5,
       sizeMax = 25,
-      sizeStep = 1,
+      sizeStep = 0.1,
       icon = ballpointPenIcon,
       options = stows.lastBallpointPenOptions.value,
       pressureEnabled = false,
@@ -73,6 +74,48 @@ class Pen extends Tool {
     );
     assert(currentPen is! Pencil, 'Use Pencil.currentPencil instead');
     _currentPen = currentPen;
+  }
+
+  /// 획 안정화를 지원하는지. 도형펜은 도형 인식 때문에 항상 0이다.
+  bool get supportsStabilization => toolId != .shapePen;
+
+  /// 획 안정화 정도(0~0.9). perfect_freehand의 streamline과 같다.
+  double get stabilization => options.streamline;
+  set stabilization(double value) {
+    value = value.clamp(HnTuning.stabilizationMin, HnTuning.stabilizationMax);
+    value = (value * 100).roundToDouble() / 100;
+    options.streamline = value;
+    options.smoothing = value.clamp(
+      HnTuning.smoothingMin,
+      HnTuning.smoothingMax,
+    );
+  }
+
+  /// [sizeStep] 단위로 반올림한 굵기를 [sizeMin]~[sizeMax] 안에서 돌려준다.
+  ///
+  /// 부동소수점 오차(예: 5.700000000000001)가 노트 파일에 남지 않도록
+  /// 소수 첫째 자리 기준으로 정리한다.
+  double snapSize(double size) {
+    final steps = ((size - sizeMin) / sizeStep).round();
+    final snapped = sizeMin + steps * sizeStep;
+    final rounded = (snapped * 10).roundToDouble() / 10;
+    return rounded.clamp(sizeMin, sizeMax);
+  }
+
+  /// 현재 펜 설정을 바로 저장한다.
+  ///
+  /// 원본은 편집기를 닫을 때만 저장해서, 앱이 강제 종료되면 설정이 사라졌다.
+  void saveOptions() {
+    final stow = switch (toolId) {
+      .fountainPen => stows.lastFountainPenOptions,
+      .ballpointPen => stows.lastBallpointPenOptions,
+      .highlighter => stows.lastHighlighterOptions,
+      .pencil => stows.lastPencilOptions,
+      .shapePen => stows.lastShapePenOptions,
+      _ => null,
+    };
+    if (stow == null || !identical(stow.value, options)) return;
+    stow.notifyListeners();
   }
 
   void onDragStart(

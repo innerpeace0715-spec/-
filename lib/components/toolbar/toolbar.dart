@@ -19,6 +19,7 @@ import 'package:saber/components/toolbar/size_picker.dart';
 import 'package:saber/components/toolbar/toolbar_button.dart';
 import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/extensions/color_extensions.dart';
+import 'package:saber/data/hn/hn_tuning.dart';
 import 'package:saber/data/prefs.dart';
 import 'package:saber/data/tools/_tool.dart';
 import 'package:saber/data/tools/eraser.dart';
@@ -206,6 +207,9 @@ class _ToolbarState extends State<Toolbar> {
           return Collapsible(
             axis: isToolbarVertical ? .horizontal : .vertical,
             maintainState: true,
+            duration: HnTuning.panelDuration,
+            curve: HnTuning.panelCurve,
+            fade: true,
             collapsed: !showExportOptions,
             child: child!,
           );
@@ -224,6 +228,9 @@ class _ToolbarState extends State<Toolbar> {
           return Collapsible(
             axis: isToolbarVertical ? .horizontal : .vertical,
             maintainState: true,
+            duration: HnTuning.panelDuration,
+            curve: HnTuning.panelCurve,
+            fade: true,
             collapsed: toolOptionsType == .hide,
             child: switch (toolOptionsType) {
               .hide => const SizedBox.square(dimension: SizePicker.smallLength),
@@ -253,6 +260,9 @@ class _ToolbarState extends State<Toolbar> {
           return Collapsible(
             axis: isToolbarVertical ? .horizontal : .vertical,
             maintainState: true,
+            duration: HnTuning.panelDuration,
+            curve: HnTuning.panelCurve,
+            fade: true,
             collapsed: !showColorOptions,
             child: child!,
           );
@@ -287,6 +297,9 @@ class _ToolbarState extends State<Toolbar> {
           return Collapsible(
             axis: isToolbarVertical ? .horizontal : .vertical,
             maintainState: false,
+            duration: HnTuning.panelDuration,
+            curve: HnTuning.panelCurve,
+            fade: true,
             collapsed: !widget.textEditing || quill == null,
             child: quill != null
                 ? QuillSimpleToolbar(

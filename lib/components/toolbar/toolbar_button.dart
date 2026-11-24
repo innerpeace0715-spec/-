@@ -1,4 +1,6 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:saber/components/hn/hn_pressable.dart';
+import 'package:saber/data/hn/hn_tuning.dart';
 
 class ToolbarIconButton extends StatelessWidget {
   const new({
@@ -47,14 +49,33 @@ class ToolbarIconButton extends StatelessWidget {
       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
     );
 
+    final onPressed = this.onPressed;
+    final isEnabled = enabled && onPressed != null;
     return Padding(
       padding: padding,
-      child: IconButton.filled(
-        style: buttonStyle,
-        onPressed: (enabled) ? onPressed : null,
-        tooltip: tooltip,
-        isSelected: selected,
-        icon: child,
+      child: HnPressable(
+        enabled: isEnabled,
+        child: IconButton.filled(
+          style: buttonStyle,
+          onPressed: isEnabled
+              ? () {
+                  HnTuning.selectionHaptic();
+                  onPressed();
+                }
+              : null,
+          tooltip: tooltip,
+          isSelected: selected,
+          icon: AnimatedSwitcher(
+            duration: HnTuning.pressUpDuration,
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, animation) => ScaleTransition(
+              scale: Tween(begin: 0.85, end: 1.0).animate(animation),
+              child: FadeTransition(opacity: animation, child: child),
+            ),
+            child: KeyedSubtree(key: ValueKey(selected), child: child),
+          ),
+        ),
       ),
     );
   }

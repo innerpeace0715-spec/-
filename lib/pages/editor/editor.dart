@@ -38,6 +38,7 @@ import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/extensions/change_notifier_extensions.dart';
 import 'package:saber/data/extensions/matrix4_extensions.dart';
 import 'package:saber/data/file_manager/file_manager.dart';
+import 'package:saber/data/hn/hn_tuning.dart';
 import 'package:saber/data/nextcloud/saber_syncer.dart';
 import 'package:saber/data/prefs.dart';
 import 'package:saber/data/tools/_tool.dart';
@@ -1828,6 +1829,7 @@ class EditorState extends State<Editor> {
                         showDragHandle: true,
                         backgroundColor: colorScheme.surface,
                         constraints: const BoxConstraints(maxWidth: 500),
+                        sheetAnimationStyle: HnTuning.sheetAnimationStyle,
                       );
                     },
                   ),

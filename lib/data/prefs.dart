@@ -273,6 +273,44 @@ class Stows {
         fromJson: _strokeOptionsFromJson,
         volatile: !_isOnMainIsolate,
       );
+
+  /// Saber HN: 도구별 즐겨찾기 굵기 3개. 문자열 목록으로 저장한다.
+  final hnFavoriteSizesFountainPen = PlainStow(
+        'hnFavoriteSizesFountainPen',
+        const ['1.5', '3', '6'],
+        volatile: !_isOnMainIsolate,
+      ),
+      hnFavoriteSizesBallpointPen = PlainStow(
+        'hnFavoriteSizesBallpointPen',
+        const ['1.5', '3', '6'],
+        volatile: !_isOnMainIsolate,
+      ),
+      hnFavoriteSizesPencil = PlainStow('hnFavoriteSizesPencil', const [
+        '1.5',
+        '3',
+        '6',
+      ], volatile: !_isOnMainIsolate),
+      hnFavoriteSizesShapePen = PlainStow('hnFavoriteSizesShapePen', const [
+        '1.5',
+        '3',
+        '6',
+      ], volatile: !_isOnMainIsolate),
+      hnFavoriteSizesHighlighter = PlainStow(
+        'hnFavoriteSizesHighlighter',
+        const ['20', '40', '70'],
+        volatile: !_isOnMainIsolate,
+      );
+
+  PlainStow<List<String>>? hnFavoriteSizesFor(ToolId toolId) =>
+      switch (toolId) {
+        .fountainPen => hnFavoriteSizesFountainPen,
+        .ballpointPen => hnFavoriteSizesBallpointPen,
+        .pencil => hnFavoriteSizesPencil,
+        .shapePen => hnFavoriteSizesShapePen,
+        .highlighter => hnFavoriteSizesHighlighter,
+        _ => null,
+      };
+
   final lastFountainPenColor = PlainStow(
         'lastFountainPenColor',
         Colors.black.toARGB32(),

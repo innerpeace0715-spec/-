@@ -1,8 +1,11 @@
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:saber/components/hn/hn_pressable.dart';
+import 'package:saber/components/toolbar/hn_pen_extras.dart';
 import 'package:saber/components/toolbar/size_picker.dart';
 import 'package:saber/data/extensions/axis_extensions.dart';
+import 'package:saber/data/hn/hn_tuning.dart';
 import 'package:saber/data/prefs.dart';
 import 'package:saber/data/tools/highlighter.dart';
 import 'package:saber/data/tools/pen.dart';
@@ -30,58 +33,72 @@ class _PenModalState<T extends Pen> extends State<PenModal<T>> {
     final axis = stows.editorToolbarAlignment.value.axis.opposite;
     final pen = widget.getTool();
 
-    return Flex(
-      direction: axis,
-      mainAxisAlignment: .center,
-      spacing: 8,
-      children: [
-        SizePicker(axis: axis, pen: pen),
+    void refresh() => setState(() {});
 
-        if (pen is! Highlighter && pen is! Pencil) ...[
-          _PenSelector(
-            isSelected: Pen.currentPen.icon == Pen.fountainPenIcon,
-            onPressed: () => setState(() {
-              widget.setTool(Pen.fountainPen());
-            }),
-            tooltip: t.editor.pens.fountainPen,
-            icon: SvgPicture.asset(
-              'assets/images/scribble_fountain.svg',
-              width: 32,
-              height: 32 / 508 * 374,
-              theme: SvgTheme(
-                currentColor: Pen.currentPen.icon == Pen.fountainPenIcon
-                    ? ColorScheme.of(context).secondary
-                    : ColorScheme.of(context).onSurface,
+    return SingleChildScrollView(
+      scrollDirection: axis,
+      physics: const BouncingScrollPhysics(),
+      child: Flex(
+        direction: axis,
+        mainAxisAlignment: .center,
+        mainAxisSize: .min,
+        spacing: 8,
+        children: [
+          SizePicker(axis: axis, pen: pen, onChanged: refresh),
+          StrokePreview(pen: pen),
+          FavoriteSizes(axis: axis, pen: pen, onChanged: refresh),
+          if (pen.supportsStabilization)
+            StabilizationPicker(axis: axis, pen: pen, onChanged: refresh),
+
+          if (pen is! Highlighter && pen is! Pencil) ...[
+            _PenSelector(
+              isSelected: Pen.currentPen.icon == Pen.fountainPenIcon,
+              onPressed: () => setState(() {
+                HnTuning.selectionHaptic();
+                widget.setTool(Pen.fountainPen());
+              }),
+              tooltip: t.editor.pens.fountainPen,
+              icon: SvgPicture.asset(
+                'assets/images/scribble_fountain.svg',
+                width: 32,
+                height: 32 / 508 * 374,
+                theme: SvgTheme(
+                  currentColor: Pen.currentPen.icon == Pen.fountainPenIcon
+                      ? ColorScheme.of(context).secondary
+                      : ColorScheme.of(context).onSurface,
+                ),
               ),
             ),
-          ),
-          _PenSelector(
-            isSelected: Pen.currentPen.icon == Pen.ballpointPenIcon,
-            onPressed: () => setState(() {
-              widget.setTool(Pen.ballpointPen());
-            }),
-            tooltip: t.editor.pens.ballpointPen,
-            icon: SvgPicture.asset(
-              'assets/images/scribble_ballpoint.svg',
-              width: 32,
-              height: 32 / 508 * 374,
-              theme: SvgTheme(
-                currentColor: Pen.currentPen.icon == Pen.ballpointPenIcon
-                    ? ColorScheme.of(context).secondary
-                    : ColorScheme.of(context).onSurface,
+            _PenSelector(
+              isSelected: Pen.currentPen.icon == Pen.ballpointPenIcon,
+              onPressed: () => setState(() {
+                HnTuning.selectionHaptic();
+                widget.setTool(Pen.ballpointPen());
+              }),
+              tooltip: t.editor.pens.ballpointPen,
+              icon: SvgPicture.asset(
+                'assets/images/scribble_ballpoint.svg',
+                width: 32,
+                height: 32 / 508 * 374,
+                theme: SvgTheme(
+                  currentColor: Pen.currentPen.icon == Pen.ballpointPenIcon
+                      ? ColorScheme.of(context).secondary
+                      : ColorScheme.of(context).onSurface,
+                ),
               ),
             ),
-          ),
-          _PenSelector(
-            isSelected: Pen.currentPen.icon == ShapePen.shapePenIcon,
-            onPressed: () => setState(() {
-              widget.setTool(ShapePen());
-            }),
-            tooltip: t.editor.pens.shapePen,
-            icon: const FaIcon(ShapePen.shapePenIcon),
-          ),
+            _PenSelector(
+              isSelected: Pen.currentPen.icon == ShapePen.shapePenIcon,
+              onPressed: () => setState(() {
+                HnTuning.selectionHaptic();
+                widget.setTool(ShapePen());
+              }),
+              tooltip: t.editor.pens.shapePen,
+              icon: const FaIcon(ShapePen.shapePenIcon),
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -94,20 +111,22 @@ class const _PenSelector({
 }) extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return IconButton(
-      onPressed: onPressed,
-      isSelected: isSelected,
-      style: IconButton.styleFrom(
-        foregroundColor: isSelected
-            ? ColorScheme.of(context).secondary
-            : ColorScheme.of(context).onSurface,
-        backgroundColor: isSelected
-            ? ColorScheme.of(context).secondary.withValues(alpha: 0.1)
-            : Colors.transparent,
-        shape: const CircleBorder(),
+    return HnPressable(
+      child: IconButton(
+        onPressed: onPressed,
+        isSelected: isSelected,
+        style: IconButton.styleFrom(
+          foregroundColor: isSelected
+              ? ColorScheme.of(context).secondary
+              : ColorScheme.of(context).onSurface,
+          backgroundColor: isSelected
+              ? ColorScheme.of(context).secondary.withValues(alpha: 0.1)
+              : Colors.transparent,
+          shape: const CircleBorder(),
+        ),
+        tooltip: tooltip,
+        icon: icon,
       ),
-      tooltip: tooltip,
-      icon: icon,
     );
   }
 }

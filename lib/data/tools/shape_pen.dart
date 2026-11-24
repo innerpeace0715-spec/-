@@ -15,9 +15,9 @@ class ShapePen extends Pen {
   new()
     : super(
         name: t.editor.pens.shapePen,
-        sizeMin: 1,
+        sizeMin: 0.5,
         sizeMax: 25,
-        sizeStep: 1,
+        sizeStep: 0.1,
         icon: shapePenIcon,
         options: stows.lastShapePenOptions.value,
         pressureEnabled: false,
