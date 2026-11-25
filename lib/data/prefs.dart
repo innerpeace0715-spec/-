@@ -337,6 +337,64 @@ class Stows {
     _ => null,
   };
 
+  /// Saber HN: 도구별 획 안정화 세기(0~1, 입력 필터).
+  final hnStabilizationFountainPen = PlainStow(
+        'hnStabilizationFountainPen',
+        0.35,
+        volatile: !_isOnMainIsolate,
+      ),
+      hnStabilizationBallpointPen = PlainStow(
+        'hnStabilizationBallpointPen',
+        0.35,
+        volatile: !_isOnMainIsolate,
+      ),
+      hnStabilizationPencil = PlainStow(
+        'hnStabilizationPencil',
+        0.2,
+        volatile: !_isOnMainIsolate,
+      ),
+      hnStabilizationHighlighter = PlainStow(
+        'hnStabilizationHighlighter',
+        0.5,
+        volatile: !_isOnMainIsolate,
+      );
+
+  PlainStow<double>? hnStabilizationFor(ToolId toolId) => switch (toolId) {
+    .fountainPen => hnStabilizationFountainPen,
+    .ballpointPen => hnStabilizationBallpointPen,
+    .pencil => hnStabilizationPencil,
+    .highlighter => hnStabilizationHighlighter,
+    _ => null,
+  };
+
+  /// Saber HN: 획 끝에서 펜을 잠깐 멈추면 도형으로 바꾸기.
+  final hnHoldToShape = PlainStow(
+    'hnHoldToShape',
+    true,
+    volatile: !_isOnMainIsolate,
+  );
+
+  /// Saber HN: 두 손가락 탭 실행취소, 세 손가락 탭 다시실행.
+  final hnTapGestures = PlainStow(
+    'hnTapGestures',
+    true,
+    volatile: !_isOnMainIsolate,
+  );
+
+  /// Saber HN: 툴바 빠른 색 3개(ARGB).
+  final hnQuickColors = PlainStow<List<String>>('hnQuickColors', const [
+    '4278190080',
+    '4293212469',
+    '4280191205',
+  ], volatile: !_isOnMainIsolate);
+
+  /// Saber HN: 설정 이전(migration) 버전.
+  final hnSettingsVersion = PlainStow(
+    'hnSettingsVersion',
+    0,
+    volatile: !_isOnMainIsolate,
+  );
+
   /// Saber HN: 원형 퀵메뉴 표시 여부와 위치(화면 비율 0~1).
   final hnQuickWheelVisible = PlainStow(
     'hnQuickWheelVisible',

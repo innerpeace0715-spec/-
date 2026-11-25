@@ -9,18 +9,23 @@ import 'package:material_ui/material_ui.dart';
 abstract final class HnTuning {
   // ───────────────────────── 획 안정화 ─────────────────────────
 
-  /// 안정화 슬라이더 범위. perfect_freehand의 streamline 값과 같다.
-  /// 0이면 보정 없음, 0.9면 매우 강한 보정(선이 펜촉보다 늦게 따라옴).
+  /// 안정화 슬라이더 범위(0~100%)와 눈금 수(5% 단위).
   static const double stabilizationMin = 0;
-  static const stabilizationMax = 0.9;
+  static const double stabilizationMax = 1;
+  static const stabilizationDivisions = 20;
 
-  /// 슬라이더 눈금 수(0.05 단위).
-  static const stabilizationDivisions = 18;
+  /// 그리기 단계의 지연(perfect_freehand streamline). 떨림은 입력 필터가 잡으므로
+  /// 낮게 둔다. 원본 기본값은 0.5.
+  static const renderStreamline = 0.2;
 
-  /// 안정화 값에 맞춰 smoothing(외곽선 부드러움)을 정할 때의 범위.
-  /// smoothing이 너무 낮으면 외곽선이 각져 보여 하한을 둔다.
-  static const smoothingMin = 0.3;
-  static const smoothingMax = 0.9;
+  /// 획 끝에서 이 시간 동안 멈춰 있으면 도형으로 인식한다.
+  static const holdShapeDelay = Duration(milliseconds: 550);
+
+  /// "멈춤"으로 볼 움직임 허용치(페이지 좌표).
+  static const double holdShapeStillDistance = 4;
+
+  /// 도형 인식 후 이만큼 움직이면 취소.
+  static const double holdShapeCancelDistance = 14;
 
   // ───────────────────────── 굵기 ─────────────────────────
 
@@ -87,6 +92,10 @@ abstract final class HnTuning {
 
   /// 마지막 페이지 아래로 더 내릴 수 있는 여백(화면 높이 비율).
   static const extraScrollBelowPages = 0.5;
+
+  /// 손가락 탭 제스처(두 손가락=실행취소, 세 손가락=다시실행) 판정 기준.
+  static const tapGestureMaxDuration = Duration(milliseconds: 280);
+  static const double tapGestureMaxMove = 18;
 
   // ───────────────────────── 진동 ─────────────────────────
 

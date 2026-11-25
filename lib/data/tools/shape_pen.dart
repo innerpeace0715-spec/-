@@ -71,11 +71,23 @@ class ShapePen extends Pen {
     ShapePen.detectedShape = null;
 
     if (detectedShape == null) return rawStroke;
+    return applyShape(rawStroke, detectedShape) ?? rawStroke;
+  }
 
+  /// [rawStroke]를 인식된 [detectedShape]로 바꾼다. 알 수 없는 도형이면 null.
+  ///
+  /// Saber HN: 다른 펜의 "꾹 누르면 도형" 기능에서도 쓴다.
+  static Stroke? applyShape(
+    Stroke rawStroke,
+    RecognizedUnistroke detectedShape,
+  ) {
+    final color = rawStroke.color;
+    final pressureEnabled = rawStroke.pressureEnabled;
+    final toolId = rawStroke.toolId;
     switch (detectedShape.name) {
       case null:
         log.info('Detected unknown shape');
-        return rawStroke;
+        return null;
       case DefaultUnistrokeNames.line:
         log.info('Detected line');
         return rawStroke..convertToLine();
@@ -83,7 +95,7 @@ class ShapePen extends Pen {
         final rect = detectedShape.convertToRect();
         log.info('Detected rectangle: $rect');
         return RectangleStroke(
-          color: rawStroke.color,
+          color: color,
           pressureEnabled: pressureEnabled,
           options: rawStroke.options,
           pageIndex: rawStroke.pageIndex,
@@ -95,7 +107,7 @@ class ShapePen extends Pen {
         final (center, radius) = detectedShape.convertToCircle();
         log.info('Detected circle: c=$center, r=$radius');
         return CircleStroke(
-          color: rawStroke.color,
+          color: color,
           pressureEnabled: pressureEnabled,
           options: rawStroke.options,
           pageIndex: rawStroke.pageIndex,
@@ -109,7 +121,7 @@ class ShapePen extends Pen {
         final polygon = detectedShape.convertToCanonicalPolygon();
         log.info('Detected ${detectedShape.name}');
         return Stroke(
-          color: rawStroke.color,
+          color: color,
           pressureEnabled: pressureEnabled,
           options: rawStroke.options,
           pageIndex: rawStroke.pageIndex,

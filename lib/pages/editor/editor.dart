@@ -23,6 +23,7 @@ import 'package:saber/components/canvas/canvas_image.dart';
 import 'package:saber/components/canvas/image/editor_image.dart';
 import 'package:saber/components/canvas/save_indicator.dart';
 import 'package:saber/components/editor/read_only_banner.dart';
+import 'package:saber/components/hn/hn_tap_gestures.dart';
 import 'package:saber/components/theming/adaptive_alert_dialog.dart';
 import 'package:saber/components/theming/adaptive_icon.dart';
 import 'package:saber/components/theming/dynamic_material_app.dart';
@@ -38,6 +39,7 @@ import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/extensions/change_notifier_extensions.dart';
 import 'package:saber/data/extensions/matrix4_extensions.dart';
 import 'package:saber/data/file_manager/file_manager.dart';
+import 'package:saber/data/hn/hn_migration.dart';
 import 'package:saber/data/hn/hn_tuning.dart';
 import 'package:saber/data/nextcloud/saber_syncer.dart';
 import 'package:saber/data/prefs.dart';
@@ -188,6 +190,7 @@ class EditorState extends State<Editor> {
 
     _initAsync();
     _assignKeybindings();
+    unawaited(runHnMigrations());
 
     super.initState();
   }
@@ -1485,41 +1488,46 @@ class EditorState extends State<Editor> {
         stows.editorToolbarAlignment.value == .left ||
         stows.editorToolbarAlignment.value == .right;
 
-    final Widget canvas = CanvasGestureDetector(
-      key: _canvasGestureDetectorKey,
-      filePath: coreInfo.filePath,
-      isDrawGesture: isDrawGesture,
-      onInteractionEnd: onInteractionEnd,
-      onDrawStart: onDrawStart,
-      onDrawUpdate: onDrawUpdate,
-      onDrawEnd: onDrawEnd,
-      onHovering: onHovering,
-      onHoveringEnd: onHoveringEnd,
-      onStylusButtonChanged: onStylusButtonChanged,
-      updatePointerData: updatePointerData,
-      undo: undo,
-      redo: redo,
-      pages: coreInfo.pages,
-      initialPageIndex: coreInfo.initialPageIndex,
-      pageBuilder: pageBuilder,
-      isTextEditing: () => currentTool == Tool.textEditing,
-      placeholderPageBuilder: (BuildContext context, int pageIndex) {
-        return Canvas(
-          path: coreInfo.filePath,
-          page: coreInfo.pages[pageIndex],
-          pageIndex: 0,
-          textEditing: false,
-          coreInfo: EditorCoreInfo.placeholder,
-          currentStroke: null,
-          currentStrokeDetectedShape: null,
-          currentSelection: null,
-          placeholder: true,
-          setAsBackground: null,
-          currentTool: currentTool,
-          currentScale: double.minPositive,
-        );
-      },
-      transformationController: _transformationController,
+    final Widget canvas = HnTapGestures(
+      enabled: stows.hnTapGestures.value && !coreInfo.readOnly,
+      onUndo: () => undo(),
+      onRedo: redo,
+      child: CanvasGestureDetector(
+        key: _canvasGestureDetectorKey,
+        filePath: coreInfo.filePath,
+        isDrawGesture: isDrawGesture,
+        onInteractionEnd: onInteractionEnd,
+        onDrawStart: onDrawStart,
+        onDrawUpdate: onDrawUpdate,
+        onDrawEnd: onDrawEnd,
+        onHovering: onHovering,
+        onHoveringEnd: onHoveringEnd,
+        onStylusButtonChanged: onStylusButtonChanged,
+        updatePointerData: updatePointerData,
+        undo: undo,
+        redo: redo,
+        pages: coreInfo.pages,
+        initialPageIndex: coreInfo.initialPageIndex,
+        pageBuilder: pageBuilder,
+        isTextEditing: () => currentTool == Tool.textEditing,
+        placeholderPageBuilder: (BuildContext context, int pageIndex) {
+          return Canvas(
+            path: coreInfo.filePath,
+            page: coreInfo.pages[pageIndex],
+            pageIndex: 0,
+            textEditing: false,
+            coreInfo: EditorCoreInfo.placeholder,
+            currentStroke: null,
+            currentStrokeDetectedShape: null,
+            currentSelection: null,
+            placeholder: true,
+            setAsBackground: null,
+            currentTool: currentTool,
+            currentScale: double.minPositive,
+          );
+        },
+        transformationController: _transformationController,
+      ),
     );
 
     final readonlyBanner = ReadOnlyBanner(

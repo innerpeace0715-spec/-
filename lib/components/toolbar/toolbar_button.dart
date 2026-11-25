@@ -28,28 +28,35 @@ class ToolbarIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = ColorScheme.of(context);
+    // Saber HN: 삼성노트처럼 평평한 아이콘. 고른 도구는 옅은 회색 바탕.
     final backgroundColor = WidgetStateProperty.resolveWith((states) {
       if (states.contains(WidgetState.disabled) ||
           !states.contains(WidgetState.selected)) {
         return Colors.transparent;
       }
-      return colorScheme.primary;
+      return colorScheme.onSurface.withValues(alpha: 0.09);
     });
     final foregroundColor = WidgetStateProperty.resolveWith((states) {
       if (states.contains(WidgetState.disabled)) {
-        return colorScheme.onSurface.withValues(alpha: 0.4);
+        return colorScheme.onSurface.withValues(alpha: 0.25);
       }
       if (states.contains(WidgetState.selected)) {
-        return colorScheme.onPrimary;
+        return colorScheme.onSurface;
       }
-      return colorScheme.primary;
+      return colorScheme.onSurface.withValues(alpha: 0.72);
     });
     final buttonStyle = ButtonStyle(
       backgroundColor: backgroundColor,
       iconColor: foregroundColor,
       foregroundColor: foregroundColor,
-      iconSize: const WidgetStatePropertyAll(20),
-      padding: const WidgetStatePropertyAll(EdgeInsets.all(8)),
+      overlayColor: WidgetStatePropertyAll(
+        colorScheme.onSurface.withValues(alpha: 0.06),
+      ),
+      iconSize: const WidgetStatePropertyAll(23),
+      padding: const WidgetStatePropertyAll(EdgeInsets.all(7)),
+      shape: WidgetStatePropertyAll(
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
     );
 

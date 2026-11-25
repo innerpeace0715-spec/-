@@ -1,18 +1,15 @@
 import 'dart:io';
 
 import 'package:collapsible/collapsible.dart';
-import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:keybinder/keybinder.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:saber/components/hn/hn_popover.dart';
+import 'package:saber/components/hn/hn_pressable.dart';
 import 'package:saber/components/hn/quick_wheel.dart';
-import 'package:saber/components/theming/adaptive_icon.dart';
 import 'package:saber/components/theming/dynamic_material_app.dart';
-import 'package:saber/components/theming/uni_icon.dart';
 import 'package:saber/components/toolbar/color_bar.dart';
 import 'package:saber/components/toolbar/export_bar.dart';
 import 'package:saber/components/toolbar/pen_modal.dart';
@@ -28,7 +25,6 @@ import 'package:saber/data/tools/eraser.dart';
 import 'package:saber/data/tools/highlighter.dart';
 import 'package:saber/data/tools/laser_pointer.dart';
 import 'package:saber/data/tools/pen.dart';
-import 'package:saber/data/tools/pencil.dart';
 import 'package:saber/data/tools/select.dart';
 import 'package:saber/i18n/strings.g.dart';
 
@@ -100,7 +96,6 @@ class _ToolbarState extends State<Toolbar> {
   final _penCardPortal = OverlayPortalController();
   final _penLinks = {
     ToolOptions.pen: LayerLink(),
-    ToolOptions.pencil: LayerLink(),
     ToolOptions.highlighter: LayerLink(),
   };
   final _penCardTapGroup = Object();
@@ -111,6 +106,10 @@ class _ToolbarState extends State<Toolbar> {
 
   void _onToolOptionsChanged() {
     final type = toolOptionsType.value;
+    if (type == .pencil) {
+      toolOptionsType.value = .pen;
+      return;
+    }
     if (_penLinks.containsKey(type)) {
       _cardType = type;
       if (!_penCardPortal.isShowing) _penCardPortal.show();
@@ -149,15 +148,29 @@ class _ToolbarState extends State<Toolbar> {
     }
   }
 
+  /// 펜 버튼이 맡는 도구(만년필·볼펜·연필·도형펜). 형광펜은 따로.
+  static bool _isPenLike(Tool tool) => tool is Pen && tool is! Highlighter;
+  Pen _lastPenLike = Pen.currentPen;
+  Pen get _penLike {
+    final tool = widget.currentTool;
+    if (_isPenLike(tool)) _lastPenLike = tool as Pen;
+    return _lastPenLike;
+  }
+
+  /// 펜 설정 창에 보여 줄 펜.
+  Pen get _cardPen {
+    final tool = widget.currentTool;
+    if (tool is Pen) return tool;
+    return _cardType == .highlighter
+        ? Highlighter.currentHighlighter
+        : _penLike;
+  }
+
   void _openSettingsForCurrentPen() {
     final tool = widget.currentTool;
-    final Pen pen = tool is Pen ? tool : Pen.currentPen;
+    final Pen pen = tool is Pen ? tool : _penLike;
     if (tool != pen) widget.setTool(pen);
-    toolOptionsType.value = switch (pen) {
-      Highlighter() => .highlighter,
-      Pencil() => .pencil,
-      _ => .pen,
-    };
+    toolOptionsType.value = pen is Highlighter ? .highlighter : .pen;
   }
 
   @override
@@ -393,57 +406,44 @@ class _ToolbarState extends State<Toolbar> {
           child: Wrap(
             direction: isToolbarVertical ? .vertical : .horizontal,
             alignment: WrapAlignment.center,
-            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            runSpacing: 6,
             children: [
+              // ── 삼성노트 순서: 텍스트 · 펜 · 형광펜 · 지우개 · 올가미 ──
+              ToolbarIconButton(
+                tooltip: t.editor.toolbar.text,
+                selected: widget.textEditing,
+                enabled: !widget.readOnly,
+                onPressed: widget.toggleTextEditing,
+                padding: buttonPadding,
+                child: const Icon(Symbols.keyboard),
+              ),
               TapRegion(
                 groupId: _penCardTapGroup,
                 child: CompositedTransformTarget(
                   link: _penLinks[ToolOptions.pen]!,
                   child: ToolbarIconButton(
-                    tooltip: Pen.currentPen.name,
-                    selected: widget.currentTool == Pen.currentPen,
+                    tooltip: _penLike.name,
+                    selected: _isPenLike(widget.currentTool),
                     enabled: !widget.readOnly,
                     onPressed: () {
-                      if (widget.currentTool == Pen.currentPen) {
-                        if (toolOptionsType.value == .pen) {
-                          toolOptionsType.value = .hide;
-                        } else {
-                          toolOptionsType.value = .pen;
-                        }
+                      if (_isPenLike(widget.currentTool)) {
+                        toolOptionsType.value = toolOptionsType.value == .pen
+                            ? .hide
+                            : .pen;
                       } else {
                         toolOptionsType.value = .hide;
-                        widget.setTool(Pen.currentPen);
+                        widget.setTool(_penLike);
                       }
                     },
                     onLongPress: _showQuickWheel,
                     padding: buttonPadding,
-                    child: UniIcon(Pen.currentPen.icon, size: 16),
-                  ),
-                ),
-              ),
-              TapRegion(
-                groupId: _penCardTapGroup,
-                child: CompositedTransformTarget(
-                  link: _penLinks[ToolOptions.pencil]!,
-                  child: ToolbarIconButton(
-                    tooltip: t.editor.pens.pencil,
-                    selected: widget.currentTool == Pencil.currentPencil,
-                    enabled: !widget.readOnly,
-                    onPressed: () {
-                      if (widget.currentTool == Pencil.currentPencil) {
-                        if (toolOptionsType.value == .pencil) {
-                          toolOptionsType.value = .hide;
-                        } else {
-                          toolOptionsType.value = .pencil;
-                        }
-                      } else {
-                        toolOptionsType.value = .hide;
-                        widget.setTool(Pencil.currentPencil);
-                      }
-                    },
-                    onLongPress: _showQuickWheel,
-                    padding: buttonPadding,
-                    child: const FaIcon(Pencil.pencilIcon, size: 16),
+                    child: Icon(switch (_penLike.toolId) {
+                      .pencil => Symbols.stylus_pencil,
+                      .ballpointPen => Symbols.ink_pen,
+                      .shapePen => Symbols.draw_abstract,
+                      _ => Symbols.stylus_fountain_pen,
+                    }),
                   ),
                 ),
               ),
@@ -453,17 +453,14 @@ class _ToolbarState extends State<Toolbar> {
                   link: _penLinks[ToolOptions.highlighter]!,
                   child: ToolbarIconButton(
                     tooltip: t.editor.pens.highlighter,
-                    selected:
-                        widget.currentTool == Highlighter.currentHighlighter,
+                    selected: widget.currentTool is Highlighter,
                     enabled: !widget.readOnly,
                     onPressed: () {
-                      if (widget.currentTool ==
-                          Highlighter.currentHighlighter) {
-                        if (toolOptionsType.value == .highlighter) {
-                          toolOptionsType.value = .hide;
-                        } else {
-                          toolOptionsType.value = .highlighter;
-                        }
+                      if (widget.currentTool is Highlighter) {
+                        toolOptionsType.value =
+                            toolOptionsType.value == .highlighter
+                            ? .hide
+                            : .highlighter;
                       } else {
                         toolOptionsType.value = .hide;
                         widget.setTool(Highlighter.currentHighlighter);
@@ -471,38 +468,17 @@ class _ToolbarState extends State<Toolbar> {
                     },
                     onLongPress: _showQuickWheel,
                     padding: buttonPadding,
-                    child: const FaIcon(Highlighter.highlighterIcon, size: 16),
+                    child: const Icon(Symbols.ink_highlighter),
                   ),
                 ),
               ),
-              ValueListenableBuilder(
-                valueListenable: showColorOptions,
-                builder: (context, showColorOptions, child) {
-                  return ToolbarIconButton(
-                    tooltip: t.editor.toolbar.toggleColors,
-                    selected: showColorOptions,
-                    enabled: !widget.readOnly,
-                    onPressed: toggleColorOptions,
-                    padding: buttonPadding,
-                    child: child!,
-                  );
-                },
-                child: currentColor == null
-                    ? const Icon(Icons.palette)
-                    : Container(
-                        width: 18,
-                        height: 18,
-                        decoration: BoxDecoration(
-                          color: currentColor
-                              .withInversion(invert)
-                              .withValues(alpha: 1),
-                          shape: .circle,
-                          border: Border.all(
-                            color: colorScheme.primary,
-                            width: 2,
-                          ),
-                        ),
-                      ),
+              ToolbarIconButton(
+                tooltip: t.editor.toolbar.toggleEraser,
+                selected: widget.currentTool is Eraser,
+                enabled: !widget.readOnly,
+                onPressed: toggleEraser,
+                padding: buttonPadding,
+                child: const Icon(Symbols.ink_eraser),
               ),
               ToolbarIconButton(
                 tooltip: t.editor.toolbar.select,
@@ -513,19 +489,47 @@ class _ToolbarState extends State<Toolbar> {
                   widget.setTool(Select.currentSelect);
                 },
                 padding: buttonPadding,
-                child: Icon(
-                  CupertinoIcons.lasso,
-                  shadows: !widget.readOnly
-                      ? [
-                          BoxShadow(
-                            color: colorScheme.primary,
-                            blurRadius: 0.1,
-                            spreadRadius: 10,
-                            blurStyle: BlurStyle.solid,
-                          ),
-                        ]
-                      : null,
+                child: const Icon(Symbols.lasso_select),
+              ),
+              _ToolbarDivider(vertical: isToolbarVertical),
+
+              // ── 빠른 색 3개 ──
+              for (var i = 0; i < 3; i++)
+                _QuickColorDot(
+                  index: i,
+                  currentColor: currentColor,
+                  invert: invert,
+                  enabled: !widget.readOnly && currentColor != null,
+                  padding: buttonPadding,
+                  onPick: widget.setColor,
+                  onOpenPalette: toggleColorOptions,
                 ),
+              _ToolbarDivider(vertical: isToolbarVertical),
+
+              // ── 실행취소 · 다시실행 ──
+              ToolbarIconButton(
+                tooltip: t.editor.toolbar.undo,
+                enabled: !widget.readOnly && widget.isUndoPossible,
+                onPressed: widget.undo,
+                padding: buttonPadding,
+                child: const Icon(Icons.undo),
+              ),
+              ToolbarIconButton(
+                tooltip: t.editor.toolbar.redo,
+                enabled: !widget.readOnly && widget.isRedoPossible,
+                onPressed: widget.redo,
+                padding: buttonPadding,
+                child: const Icon(Icons.redo),
+              ),
+              _ToolbarDivider(vertical: isToolbarVertical),
+
+              // ── 나머지 ──
+              ToolbarIconButton(
+                tooltip: t.editor.toolbar.photo,
+                enabled: !widget.readOnly,
+                onPressed: widget.pickPhoto,
+                padding: buttonPadding,
+                child: const Icon(Symbols.image),
               ),
               ToolbarIconButton(
                 tooltip: t.editor.pens.laserPointer,
@@ -547,36 +551,7 @@ class _ToolbarState extends State<Toolbar> {
                   enabled: !widget.readOnly,
                   onPressed: _toggleQuickWheel,
                   padding: buttonPadding,
-                  child: const Icon(Icons.adjust_rounded),
-                ),
-              ),
-              ToolbarIconButton(
-                tooltip: t.editor.toolbar.toggleEraser,
-                selected: widget.currentTool is Eraser,
-                enabled: !widget.readOnly,
-                onPressed: toggleEraser,
-                padding: buttonPadding,
-                child: const FaIcon(FontAwesomeIcons.eraser, size: 16),
-              ),
-              ToolbarIconButton(
-                tooltip: t.editor.toolbar.photo,
-                enabled: !widget.readOnly,
-                onPressed: widget.pickPhoto,
-                padding: buttonPadding,
-                child: const AdaptiveIcon(
-                  icon: Icons.photo,
-                  cupertinoIcon: CupertinoIcons.photo,
-                ),
-              ),
-              ToolbarIconButton(
-                tooltip: t.editor.toolbar.text,
-                selected: widget.textEditing,
-                enabled: !widget.readOnly,
-                onPressed: widget.toggleTextEditing,
-                padding: buttonPadding,
-                child: const AdaptiveIcon(
-                  icon: Icons.text_fields,
-                  cupertinoIcon: CupertinoIcons.text_cursor,
+                  child: const Icon(Symbols.adjust),
                 ),
               ),
               if (!stows.hideFingerDrawingToggle.value)
@@ -589,7 +564,7 @@ class _ToolbarState extends State<Toolbar> {
                       enabled: !widget.readOnly,
                       onPressed: widget.toggleFingerDrawing,
                       padding: buttonPadding,
-                      child: const Icon(CupertinoIcons.hand_draw),
+                      child: const Icon(Symbols.pan_tool),
                     );
                   },
                 ),
@@ -599,39 +574,11 @@ class _ToolbarState extends State<Toolbar> {
                 enabled: !widget.readOnly,
                 onPressed: toggleFullscreen,
                 padding: buttonPadding,
-                child: AdaptiveIcon(
-                  icon: DynamicMaterialApp.isFullscreen
-                      ? Icons.fullscreen_exit
-                      : Icons.fullscreen,
-                  cupertinoIcon: DynamicMaterialApp.isFullscreen
-                      ? CupertinoIcons.fullscreen_exit
-                      : CupertinoIcons.fullscreen,
+                child: Icon(
+                  DynamicMaterialApp.isFullscreen
+                      ? Symbols.fullscreen_exit
+                      : Symbols.fullscreen,
                 ),
-              ),
-              Wrap(
-                direction: isToolbarVertical ? .vertical : .horizontal,
-                children: [
-                  ToolbarIconButton(
-                    tooltip: t.editor.toolbar.undo,
-                    enabled: !widget.readOnly && widget.isUndoPossible,
-                    onPressed: widget.undo,
-                    padding: buttonPadding,
-                    child: const AdaptiveIcon(
-                      icon: Icons.undo,
-                      cupertinoIcon: CupertinoIcons.arrow_uturn_left,
-                    ),
-                  ),
-                  ToolbarIconButton(
-                    tooltip: t.editor.toolbar.redo,
-                    enabled: !widget.readOnly && widget.isRedoPossible,
-                    onPressed: widget.redo,
-                    padding: buttonPadding,
-                    child: const AdaptiveIcon(
-                      icon: Icons.redo,
-                      cupertinoIcon: CupertinoIcons.arrow_uturn_right,
-                    ),
-                  ),
-                ],
               ),
               ValueListenableBuilder(
                 valueListenable: showExportOptions,
@@ -645,10 +592,7 @@ class _ToolbarState extends State<Toolbar> {
                     child: child!,
                   );
                 },
-                child: const AdaptiveIcon(
-                  icon: Icons.share,
-                  cupertinoIcon: CupertinoIcons.share,
-                ),
+                child: const Icon(Symbols.share),
               ),
             ],
           ),
@@ -694,17 +638,15 @@ class _ToolbarState extends State<Toolbar> {
       .left => (Alignment.topRight, Alignment.topLeft, const Offset(10, -4)),
       .right => (Alignment.topLeft, Alignment.topRight, const Offset(-10, -4)),
     };
-    final card = switch (_cardType) {
-      .pencil => PenModal(
-        getTool: () => Pencil.currentPencil,
-        setTool: widget.setTool,
-      ),
-      .highlighter => PenModal(
-        getTool: () => Highlighter.currentHighlighter,
-        setTool: widget.setTool,
-      ),
-      _ => PenModal(getTool: () => Pen.currentPen, setTool: widget.setTool),
-    };
+    final card = PenModal(
+      getTool: () => _cardPen,
+      setTool: widget.setTool,
+      setColor: widget.setColor,
+      onMoreColors: () {
+        toolOptionsType.value = .hide;
+        if (!showColorOptions.value) toggleColorOptions();
+      },
+    );
     return Align(
       alignment: Alignment.topLeft,
       child: CompositedTransformFollower(
@@ -764,3 +706,135 @@ class _ToolbarState extends State<Toolbar> {
 }
 
 enum ToolOptions { hide, pen, highlighter, pencil, select }
+
+/// 툴바 그룹 사이의 얇은 구분선.
+class _ToolbarDivider extends StatelessWidget {
+  const new({required this.vertical});
+
+  final bool vertical;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = ColorScheme.of(context).onSurface.withValues(alpha: 0.12);
+    return Padding(
+      padding: vertical
+          ? const .symmetric(vertical: 6)
+          : const .symmetric(horizontal: 6),
+      child: SizedBox(
+        width: vertical ? 22 : 1,
+        height: vertical ? 1 : 22,
+        child: ColoredBox(color: color),
+      ),
+    );
+  }
+}
+
+/// 툴바의 빠른 색(삼성노트처럼 3개).
+///
+/// 누르면 그 색으로, 이미 고른 색을 다시 누르면 전체 색상 막대를 연다.
+/// 길게 누르면 지금 색으로 바꿔 저장한다.
+class _QuickColorDot extends StatelessWidget {
+  const new({
+    required this.index,
+    required this.currentColor,
+    required this.invert,
+    required this.enabled,
+    required this.padding,
+    required this.onPick,
+    required this.onOpenPalette,
+  });
+
+  final int index;
+  final Color? currentColor;
+  final bool invert;
+  final bool enabled;
+  final EdgeInsets padding;
+  final ValueChanged<Color> onPick;
+  final VoidCallback onOpenPalette;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = ColorScheme.of(context);
+    return ValueListenableBuilder(
+      valueListenable: stows.hnQuickColors,
+      builder: (context, colors, _) {
+        final color = Color(
+          (index < colors.length ? int.tryParse(colors[index]) : null) ??
+              Colors.black.toARGB32(),
+        );
+        final selected =
+            currentColor != null &&
+            currentColor!.withAlpha(255).toARGB32() == color.toARGB32();
+        return Padding(
+          padding: padding,
+          child: Tooltip(
+            message: '빠른 색 ${index + 1} · 길게 눌러 지금 색으로 바꾸기',
+            waitDuration: const Duration(seconds: 1),
+            child: HnPressable(
+              enabled: enabled,
+              scale: 0.85,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: !enabled
+                    ? null
+                    : () {
+                        HnTuning.selectionHaptic();
+                        if (selected) {
+                          onOpenPalette();
+                        } else {
+                          onPick(color);
+                        }
+                      },
+                onLongPress: !enabled || currentColor == null
+                    ? null
+                    : () {
+                        HnTuning.confirmHaptic();
+                        final list = List.of(colors);
+                        while (list.length < 3) {
+                          list.add(Colors.black.toARGB32().toString());
+                        }
+                        list[index] = currentColor!
+                            .withAlpha(255)
+                            .toARGB32()
+                            .toString();
+                        stows.hnQuickColors.value = list;
+                      },
+                child: SizedBox(
+                  width: 36,
+                  height: 36,
+                  child: Center(
+                    child: AnimatedContainer(
+                      duration: HnTuning.pressUpDuration,
+                      curve: Curves.easeOutCubic,
+                      width: selected ? 26 : 24,
+                      height: selected ? 26 : 24,
+                      decoration: BoxDecoration(
+                        color: color.withInversion(invert),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: selected
+                              ? colorScheme.onSurface.withValues(alpha: 0.8)
+                              : colorScheme.onSurface.withValues(alpha: 0.12),
+                          width: selected ? 2.5 : 1,
+                        ),
+                      ),
+                      child: selected
+                          ? Icon(
+                              Icons.expand_more_rounded,
+                              size: 16,
+                              color: color.computeLuminance() > 0.5
+                                  ? Colors.black87
+                                  : Colors.white,
+                            )
+                          : null,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}

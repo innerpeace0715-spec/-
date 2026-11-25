@@ -34,7 +34,7 @@ void main() {
     await tester.tap(penButton);
     await tester.pumpAndSettle();
     expect(find.byType(PenModal), findsOneWidget);
-    expect(find.text('브러시 두께'), findsOneWidget);
+    expect(find.text('굵기'), findsOneWidget);
 
     // 같은 버튼을 다시 누르면 닫힌다
     await tester.tap(penButton);

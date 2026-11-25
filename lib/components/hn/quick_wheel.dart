@@ -2,18 +2,16 @@ import 'dart:math' as math;
 
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:saber/components/hn/hn_pen_art.dart';
 import 'package:saber/components/hn/hn_popover.dart';
 import 'package:saber/components/hn/hn_pressable.dart';
-import 'package:saber/components/theming/uni_icon.dart';
 import 'package:saber/components/toolbar/color_bar.dart';
 import 'package:saber/components/toolbar/size_picker.dart';
+import 'package:saber/data/hn/hn_pens.dart';
 import 'package:saber/data/hn/hn_tuning.dart';
 import 'package:saber/data/prefs.dart';
 import 'package:saber/data/tools/_tool.dart';
-import 'package:saber/data/tools/highlighter.dart';
 import 'package:saber/data/tools/pen.dart';
-import 'package:saber/data/tools/pencil.dart';
-import 'package:saber/data/tools/shape_pen.dart';
 import 'package:saber/i18n/strings.g.dart';
 import 'package:sbn/tool_id.dart';
 
@@ -56,46 +54,9 @@ class HnQuickWheel extends StatefulWidget {
 
 enum _WheelMode { main, size, color }
 
-/// 펜 넘기기 순서.
-const _penOrder = [
-  ToolId.fountainPen,
-  ToolId.ballpointPen,
-  ToolId.pencil,
-  ToolId.highlighter,
-  ToolId.shapePen,
-];
-
-Object _iconOf(ToolId id) => switch (id) {
-  .fountainPen => Pen.fountainPenIcon,
-  .ballpointPen => Pen.ballpointPenIcon,
-  .pencil => Pencil.pencilIcon,
-  .highlighter => Highlighter.highlighterIcon,
-  .shapePen => ShapePen.shapePenIcon,
-  _ => Pen.fountainPenIcon,
-};
-
-String _nameOf(ToolId id) => switch (id) {
-  .fountainPen => t.editor.pens.fountainPen,
-  .ballpointPen => t.editor.pens.ballpointPen,
-  .pencil => t.editor.pens.pencil,
-  .highlighter => t.editor.pens.highlighter,
-  .shapePen => t.editor.pens.shapePen,
-  _ => '',
-};
-
-/// [id]에 해당하는 펜 객체(이미 쓰던 것이 있으면 그대로).
-Pen _penFor(ToolId id) => switch (id) {
-  .fountainPen =>
-    Pen.currentPen.toolId == .fountainPen ? Pen.currentPen : Pen.fountainPen(),
-  .ballpointPen =>
-    Pen.currentPen.toolId == .ballpointPen
-        ? Pen.currentPen
-        : Pen.ballpointPen(),
-  .pencil => Pencil.currentPencil,
-  .highlighter => Highlighter.currentHighlighter,
-  .shapePen => Pen.currentPen is ShapePen ? Pen.currentPen : ShapePen(),
-  _ => Pen.currentPen,
-};
+const _penOrder = hnPenOrder;
+String _nameOf(ToolId id) => hnPenName(id);
+Pen _penFor(ToolId id) => hnPenFor(id);
 
 Color _opaque(Color c) => c.withAlpha(255);
 
@@ -464,13 +425,25 @@ class HnQuickWheelState extends State<HnQuickWheel> {
                       scale: animation,
                       child: FadeTransition(opacity: animation, child: child),
                     ),
-                    child: UniIcon(
-                      _iconOf(pen.toolId),
+                    child: Opacity(
                       key: ValueKey(pen.toolId),
-                      size: 40,
-                      color: _penIsActive
-                          ? _opaque(pen.color)
-                          : colorScheme.onSurface.withValues(alpha: 0.4),
+                      opacity: _penIsActive ? 1 : 0.45,
+                      child: ClipRect(
+                        child: SizedBox(
+                          height: 66,
+                          child: OverflowBox(
+                            alignment: Alignment.topCenter,
+                            maxHeight: 104,
+                            child: HnPenArt(
+                              toolId: pen.toolId,
+                              color: _opaque(pen.color),
+                              selected: true,
+                              width: 40,
+                              height: 104,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -541,12 +514,27 @@ class _MiniBubble extends StatelessWidget {
               ],
             ),
             child: Center(
-              child: UniIcon(
-                _iconOf(pen.toolId),
-                size: 22,
-                color: active
-                    ? _opaque(pen.color)
-                    : colorScheme.onSurface.withValues(alpha: 0.45),
+              child: Opacity(
+                opacity: active ? 1 : 0.45,
+                child: ClipOval(
+                  child: SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: OverflowBox(
+                      alignment: const Alignment(0, -0.2),
+                      maxHeight: 60,
+                      child: Transform.rotate(
+                        angle: 0.6,
+                        child: HnPenArt(
+                          toolId: pen.toolId,
+                          color: _opaque(pen.color),
+                          width: 20,
+                          height: 60,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -662,12 +650,21 @@ class _CarouselArc extends StatelessWidget {
                       ],
                     ),
                     child: Center(
-                      child: UniIcon(
-                        _iconOf(_penOrder[i]),
-                        size: 20,
-                        color: isSel
-                            ? color
-                            : colorScheme.onSurface.withValues(alpha: 0.6),
+                      child: ClipOval(
+                        child: SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: OverflowBox(
+                            alignment: Alignment.topCenter,
+                            maxHeight: 58,
+                            child: HnPenArt(
+                              toolId: _penOrder[i],
+                              color: isSel ? color : const Color(0xFF9E9E9E),
+                              width: 18,
+                              height: 58,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ),

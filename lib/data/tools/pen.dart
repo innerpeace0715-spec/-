@@ -1,13 +1,18 @@
+import 'dart:async';
+
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:one_dollar_unistroke_recognizer/one_dollar_unistroke_recognizer.dart';
 import 'package:perfect_freehand/perfect_freehand.dart';
 import 'package:saber/components/canvas/_stroke.dart';
 import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/hn/hn_tuning.dart';
+import 'package:saber/data/hn/one_euro.dart';
 import 'package:saber/data/prefs.dart';
 import 'package:saber/data/tools/_tool.dart';
 import 'package:saber/data/tools/highlighter.dart';
 import 'package:saber/data/tools/pencil.dart';
+import 'package:saber/data/tools/shape_pen.dart';
 import 'package:saber/i18n/strings.g.dart';
 import 'package:sbn/tool_id.dart';
 
@@ -79,16 +84,15 @@ class Pen extends Tool {
   /// 획 안정화를 지원하는지. 도형펜은 도형 인식 때문에 항상 0이다.
   bool get supportsStabilization => toolId != .shapePen;
 
-  /// 획 안정화 정도(0~0.9). perfect_freehand의 streamline과 같다.
-  double get stabilization => options.streamline;
+  /// 획 안정화 세기(0~1). 펜마다 따로 저장된다.
+  ///
+  /// 입력 점에 속도 적응형 필터([OneEuroFilter2D])를 건다. 원본처럼 그리기
+  /// 단계에서 고정 세기로 평균 내지 않으므로, 빠르게 쓸 때 선이 늦게
+  /// 따라오는 느낌이 적다.
+  double get stabilization => stows.hnStabilizationFor(toolId)?.value ?? 0;
   set stabilization(double value) {
-    value = value.clamp(HnTuning.stabilizationMin, HnTuning.stabilizationMax);
-    value = (value * 100).roundToDouble() / 100;
-    options.streamline = value;
-    options.smoothing = value.clamp(
-      HnTuning.smoothingMin,
-      HnTuning.smoothingMax,
-    );
+    value = ((value.clamp(0.0, 1.0) * 100).roundToDouble()) / 100;
+    stows.hnStabilizationFor(toolId)?.value = value;
   }
 
   /// 압력 감도(%). 100%가 원본 기본값(thinning 0.5)이다. 범위 0~200%.
@@ -139,12 +143,75 @@ class Pen extends Tool {
     stow.notifyListeners();
   }
 
+  // ── 입력 안정화 ──
+  static OneEuroFilter2D? _filter;
+  static final _clock = Stopwatch();
+  static Duration _lastTime = Duration.zero;
+  static Offset? _lastRaw;
+
+  // ── 꾹 누르면 도형으로(draw and hold) ──
+  /// 도형 인식 대기 중인지/인식되었는지 알리는 알림. 편집기가 다시 그린다.
+  static final holdShapeNotifier = ValueNotifier<RecognizedUnistroke?>(null);
+  static Timer? _holdTimer;
+  static Offset? _holdAnchor;
+  static EditorPage? _page;
+
+  static void _setHoldShape(RecognizedUnistroke? shape) {
+    if (holdShapeNotifier.value == shape) return;
+    holdShapeNotifier.value = shape;
+    // 캔버스는 ShapePen.detectedShape를 미리보기로 그린다.
+    ShapePen.detectedShape = shape;
+    _page?.redrawStrokes();
+  }
+
+  /// 이 펜이 꾹 눌러 도형 만들기를 지원하는지(도형펜은 따로 처리).
+  bool get supportsHoldShape => toolId != .shapePen && toolId != .highlighter;
+
+  static void _cancelHold() {
+    _holdTimer?.cancel();
+    _holdTimer = null;
+    _holdAnchor = null;
+    if (holdShapeNotifier.value != null) _setHoldShape(null);
+  }
+
+  void _trackHold(Offset position) {
+    if (!supportsHoldShape || !stows.hnHoldToShape.value) return;
+    final anchor = _holdAnchor;
+    final detected = holdShapeNotifier.value != null;
+    final tolerance = detected
+        ? HnTuning.holdShapeCancelDistance
+        : HnTuning.holdShapeStillDistance;
+    if (anchor != null && (position - anchor).distance <= tolerance) return;
+
+    // 움직였으므로 다시 기다린다(이미 인식됐으면 취소).
+    if (detected) _setHoldShape(null);
+    _holdAnchor = position;
+    _holdTimer?.cancel();
+    _holdTimer = Timer(HnTuning.holdShapeDelay, () {
+      final stroke = currentStroke;
+      if (stroke == null || stroke.length < 4) return;
+      final shape = stroke.detectShape();
+      if (shape == null || shape.name == null) return;
+      HnTuning.confirmHaptic();
+      _setHoldShape(shape);
+    });
+  }
+
   void onDragStart(
     Offset position,
     EditorPage page,
     int pageIndex,
     double? pressure,
   ) {
+    _filter = supportsStabilization ? oneEuroForStrength(stabilization) : null;
+    _clock
+      ..reset()
+      ..start();
+    _lastTime = Duration.zero;
+    _lastRaw = null;
+    _cancelHold();
+    _page = page;
+
     currentStroke = Stroke(
       color: strokeColor,
       pressureEnabled: pressureEnabled,
@@ -157,17 +224,44 @@ class Pen extends Tool {
   }
 
   void onDragUpdate(Offset position, double? pressure) {
+    _lastRaw = position;
+    final filter = _filter;
+    if (filter != null) {
+      final now = _clock.elapsed;
+      final dt = (now - _lastTime).inMicroseconds / 1e6;
+      _lastTime = now;
+      position = filter.filter(position, dt > 0 ? dt : 1 / 240);
+    }
     currentStroke?.addPoint(position, pressure);
+    _trackHold(_lastRaw!);
   }
 
   Stroke? onDragEnd() {
     final stroke = currentStroke;
     currentStroke = null;
+    final heldShape = holdShapeNotifier.value;
+    _cancelHold();
     if (stroke == null) return null;
 
-    return stroke
+    // 필터 때문에 끝점이 펜촉보다 약간 뒤에 있으면 실제 끝점까지 이어 준다.
+    final raw = _lastRaw;
+    if (_filter != null && raw != null && !stroke.isEmpty) {
+      final last = stroke.lastPosition;
+      if (last != null && (raw - last).distance > 0.3) {
+        stroke.addPoint(raw);
+      }
+    }
+    _filter = null;
+    _lastRaw = null;
+
+    stroke
       ..options.isComplete = true
       ..markPolygonNeedsUpdating();
+
+    if (heldShape != null) {
+      return ShapePen.applyShape(stroke, heldShape) ?? stroke;
+    }
+    return stroke;
   }
 
   /// The default stroke options.
@@ -177,12 +271,16 @@ class Pen extends Tool {
   /// (i.e. [StrokeOptions.toJson] does not include default values.)
   static final defaultOptions = StrokeOptions(size: 5);
 
-  static StrokeOptions get fountainPenOptions => defaultOptions.copyWith();
-  static StrokeOptions get ballpointPenOptions => defaultOptions.copyWith();
+  /// Saber HN: 손떨림은 입력 필터가 잡으므로 그리기 단계의 지연(streamline)은
+  /// 낮춘다. 기본값 0.5 대신 [HnTuning.renderStreamline].
+  static StrokeOptions get fountainPenOptions =>
+      defaultOptions.copyWith(streamline: HnTuning.renderStreamline);
+  static StrokeOptions get ballpointPenOptions =>
+      defaultOptions.copyWith(streamline: HnTuning.renderStreamline);
   static StrokeOptions get shapePenOptions =>
       defaultOptions.copyWith(smoothing: 0, streamline: 0);
   static StrokeOptions get highlighterOptions =>
-      defaultOptions.copyWith(size: 50);
+      defaultOptions.copyWith(size: 50, streamline: HnTuning.renderStreamline);
   static StrokeOptions get pencilOptions => defaultOptions.copyWith(
     streamline: 0.1,
     start: StrokeEndOptions.start(taperEnabled: true, customTaper: 1),

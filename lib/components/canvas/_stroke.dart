@@ -21,6 +21,10 @@ class Stroke {
   final List<PointVector> points = [];
 
   bool get isEmpty => points.isEmpty;
+
+  /// 마지막 점의 위치(없으면 null).
+  Offset? get lastPosition =>
+      points.isEmpty ? null : Offset(points.last.x, points.last.y);
   int get length => points.length;
 
   int pageIndex;

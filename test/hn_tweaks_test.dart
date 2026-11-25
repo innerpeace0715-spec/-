@@ -1,13 +1,20 @@
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:perfect_freehand/perfect_freehand.dart';
+import 'package:saber/components/canvas/_circle_stroke.dart';
 import 'package:saber/components/hn/hn_popover.dart';
+import 'package:saber/components/hn/hn_tap_gestures.dart';
 import 'package:saber/components/hn/quick_wheel.dart';
 import 'package:saber/components/toolbar/hn_pen_extras.dart';
 import 'package:saber/components/toolbar/pen_modal.dart';
 import 'package:saber/components/toolbar/size_picker.dart';
+import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/flavor_config.dart';
 import 'package:saber/data/hn/hn_tuning.dart';
+import 'package:saber/data/hn/one_euro.dart';
+import 'package:saber/data/prefs.dart';
 import 'package:saber/data/tools/_tool.dart';
 import 'package:saber/data/tools/highlighter.dart';
 import 'package:saber/data/tools/pen.dart';
@@ -68,51 +75,212 @@ void main() {
     });
   });
 
-  group('Saber HN: stabilization', () {
-    test('setter clamps and keeps smoothing in range', () {
+  group('Saber HN: stabilization (input filter)', () {
+    test('strength is stored per pen and clamped', () {
       final pen = Pen.fountainPen();
-      pen.options = pen.options.copyWith();
-
       pen.stabilization = 0.7;
-      expect(pen.options.streamline, 0.7);
-      expect(pen.options.smoothing, 0.7);
-
-      pen.stabilization = 0;
-      expect(pen.options.streamline, 0);
-      expect(pen.options.smoothing, HnTuning.smoothingMin);
-
+      expect(pen.stabilization, 0.7);
+      expect(Pencil().stabilization, isNot(0.7));
       pen.stabilization = 5;
-      expect(pen.options.streamline, HnTuning.stabilizationMax);
+      expect(pen.stabilization, 1);
+      pen.stabilization = -1;
+      expect(pen.stabilization, 0);
+      pen.stabilization = 0.35;
     });
 
-    test('default pen options are unchanged (old notes render the same)', () {
-      expect(
-        Pen.fountainPenOptions.streamline,
-        StrokeOptions.defaultStreamline,
-      );
-      expect(Pen.fountainPenOptions.smoothing, StrokeOptions.defaultSmoothing);
+    test('0 means no filter', () {
+      expect(oneEuroForStrength(0), isNull);
+      expect(oneEuroForStrength(0.3), isNotNull);
+    });
+
+    // 천천히 그은 직선에 손떨림(±1.5px)을 섞었을 때
+    double jitterAfter(double strength) {
+      final f = oneEuroForStrength(strength);
+      var sum = 0.0;
+      for (var i = 0; i < 240; i++) {
+        final noise = ((i * 7919) % 13 - 6) / 4; // -1.5 ~ 1.5
+        var p = Offset(i * 0.25, 100 + noise); // 60px/s @240Hz
+        if (f != null) p = f.filter(p, 1 / 240);
+        if (i > 20) sum += (p.dy - 100).abs();
+      }
+      return sum / 219;
+    }
+
+    test('removes slow hand jitter, more with higher strength', () {
+      final none = jitterAfter(0);
+      final mid = jitterAfter(0.35);
+      final high = jitterAfter(0.9);
+      expect(mid, lessThan(none * 0.7));
+      expect(high, lessThan(mid));
+    });
+
+    test('fast strokes barely lag', () {
+      final f = oneEuroForStrength(0.35)!;
+      Offset p = .zero;
+      // 1500px/s 직선
+      for (var i = 0; i < 60; i++) {
+        p = f.filter(Offset(i * 6.25, 0), 1 / 240);
+      }
+      expect(59 * 6.25 - p.dx, lessThan(6));
+    });
+
+    test('render lag is lower than upstream for new strokes only', () {
+      expect(Pen.fountainPenOptions.streamline, HnTuning.renderStreamline);
+      expect(HnTuning.renderStreamline, lessThan(0.5));
+      // 옛 노트(sl 없음)는 원본 기본값 0.5로 그대로 그려진다
+      expect(StrokeOptions.fromJson({}).streamline, 0.5);
+      expect(Pen.fountainPenOptions.toJson()['sl'], HnTuning.renderStreamline);
       expect(Pen.pencilOptions.streamline, 0.1);
-      // 기본값이면 노트 파일에 sl/sm이 저장되지 않는다
-      final json = Pen.fountainPenOptions.toJson();
-      expect(json.containsKey('sl'), isFalse);
-      expect(json.containsKey('sm'), isFalse);
     });
 
-    test('changed stabilization is saved in the stroke json', () {
-      final pen = Pen.ballpointPen();
-      pen.options = pen.options.copyWith();
-      pen.stabilization = 0.8;
-      final json = pen.options.toJson();
-      expect(json['sl'], 0.8);
-      final restored = StrokeOptions.fromJson(json);
-      expect(restored.streamline, 0.8);
-    });
-
-    test('shape pen does not support stabilization', () {
+    test('shape pen does not support stabilization or hold-to-shape', () {
       expect(ShapePen().supportsStabilization, isFalse);
+      expect(ShapePen().supportsHoldShape, isFalse);
       expect(Pen.fountainPen().supportsStabilization, isTrue);
-      expect(Highlighter().supportsStabilization, isTrue);
-      expect(Pencil().supportsStabilization, isTrue);
+      expect(Pen.fountainPen().supportsHoldShape, isTrue);
+    });
+  });
+
+  group('Saber HN: hold to shape', () {
+    testWidgets('pausing at the end of a circle turns it into a circle', (
+      tester,
+    ) async {
+      stows.hnHoldToShape.value = true;
+      final pen = Pen.ballpointPen();
+      pen.stabilization = 0;
+      final page = EditorPage();
+      const c = Offset(200, 200);
+      Offset at(double t) =>
+          c + Offset(math.cos(t * 2 * math.pi), math.sin(t * 2 * math.pi)) * 80;
+      pen.onDragStart(at(0), page, 0, null);
+      for (var i = 1; i <= 64; i++) {
+        pen.onDragUpdate(at(i / 64), null);
+      }
+      expect(Pen.holdShapeNotifier.value, isNull);
+      // 펜을 멈추고 기다린다
+      await tester.pump(
+        HnTuning.holdShapeDelay + const Duration(milliseconds: 50),
+      );
+      expect(Pen.holdShapeNotifier.value, isNotNull);
+      final stroke = pen.onDragEnd();
+      expect(stroke, isA<CircleStroke>());
+      expect(Pen.holdShapeNotifier.value, isNull);
+      pen.stabilization = 0.35;
+    });
+
+    testWidgets('moving again cancels; disabled setting does nothing', (
+      tester,
+    ) async {
+      final pen = Pen.ballpointPen();
+      pen.stabilization = 0;
+      final page = EditorPage();
+      stows.hnHoldToShape.value = true;
+      pen.onDragStart(.zero, page, 0, null);
+      // 인식기는 64점 이상이 필요하다(실제 S펜은 초당 240점 정도)
+      for (var i = 1; i <= 80; i++) {
+        pen.onDragUpdate(Offset(i * 2.5, math.sin(i) * 1.5), null);
+      }
+      await tester.pump(
+        HnTuning.holdShapeDelay + const Duration(milliseconds: 50),
+      );
+      expect(Pen.holdShapeNotifier.value, isNotNull); // 직선
+      pen.onDragUpdate(const Offset(200, 80), null);
+      expect(Pen.holdShapeNotifier.value, isNull);
+      final s1 = pen.onDragEnd()!;
+      expect(s1, isNot(isA<CircleStroke>()));
+
+      stows.hnHoldToShape.value = false;
+      pen.onDragStart(.zero, page, 0, null);
+      for (var i = 1; i <= 20; i++) {
+        pen.onDragUpdate(Offset(i * 10, 0), null);
+      }
+      await tester.pump(HnTuning.holdShapeDelay * 2);
+      expect(Pen.holdShapeNotifier.value, isNull);
+      pen.onDragEnd();
+      stows.hnHoldToShape.value = true;
+      pen.stabilization = 0.35;
+    });
+  });
+
+  group('Saber HN: finger tap gestures', () {
+    Future<(int, int)> run(
+      WidgetTester tester,
+      Future<void> Function(Offset center) gesture,
+    ) async {
+      var undo = 0, redo = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HnTapGestures(
+            enabled: true,
+            onUndo: () => undo++,
+            onRedo: () => redo++,
+            child: const SizedBox.expand(),
+          ),
+        ),
+      );
+      await gesture(const Offset(300, 300));
+      await tester.pump();
+      return (undo, redo);
+    }
+
+    Future<void> tapWith(
+      WidgetTester tester,
+      int fingers, {
+      Offset move = .zero,
+    }) async {
+      final gs = <TestGesture>[];
+      for (var i = 0; i < fingers; i++) {
+        gs.add(
+          await tester.startGesture(
+            Offset(300.0 + i * 60, 300),
+            pointer: 10 + i,
+          ),
+        );
+      }
+      await tester.pump(const Duration(milliseconds: 60));
+      if (move != .zero) {
+        for (final g in gs) {
+          await g.moveBy(move);
+        }
+      }
+      for (final g in gs) {
+        await g.up();
+      }
+    }
+
+    testWidgets('two fingers undo, three redo', (tester) async {
+      expect(await run(tester, (_) => tapWith(tester, 2)), (1, 0));
+      expect(await run(tester, (_) => tapWith(tester, 3)), (0, 1));
+    });
+
+    testWidgets('one finger, pinch/drag, or slow press does nothing', (
+      tester,
+    ) async {
+      expect(await run(tester, (_) => tapWith(tester, 1)), (0, 0));
+      expect(
+        await run(tester, (_) => tapWith(tester, 2, move: const Offset(40, 0))),
+        (0, 0),
+      );
+      expect(
+        await run(tester, (_) async {
+          // 0.6초 동안 누르고 있었던 두 손가락(이벤트 시각으로 판단)
+          final a = TestPointer(1);
+          final b = TestPointer(2);
+          await tester.sendEventToBinding(
+            a.down(const Offset(300, 300), timeStamp: Duration.zero),
+          );
+          await tester.sendEventToBinding(
+            b.down(const Offset(360, 300), timeStamp: Duration.zero),
+          );
+          await tester.sendEventToBinding(
+            a.up(timeStamp: const Duration(milliseconds: 600)),
+          );
+          await tester.sendEventToBinding(
+            b.up(timeStamp: const Duration(milliseconds: 600)),
+          );
+        }),
+        (0, 0),
+      );
     });
   });
 
@@ -162,10 +330,10 @@ void main() {
       Pen.currentPen = pen;
       await pump(tester, pen);
       expect(tester.takeException(), isNull);
-      expect(find.text('브러시 두께'), findsOneWidget);
-      expect(find.text('압력 감도'), findsOneWidget);
-      expect(find.text('잉크 유량'), findsOneWidget);
-      expect(find.text('안정화'), findsOneWidget);
+      expect(find.text('굵기'), findsOneWidget);
+      expect(find.text('필압 반응'), findsOneWidget);
+      expect(find.text('투명도'), findsOneWidget);
+      expect(find.text('손떨림 보정'), findsOneWidget);
       expect(find.byType(SizePicker), findsOneWidget);
       expect(find.byType(StrokePreview), findsOneWidget);
       expect(find.byType(FavoriteSizes), findsOneWidget);
@@ -177,13 +345,13 @@ void main() {
       final ballpoint = Pen.ballpointPen();
       Pen.currentPen = ballpoint;
       await pump(tester, ballpoint);
-      expect(find.text('압력 감도'), findsNothing);
-      expect(find.text('안정화'), findsOneWidget);
+      expect(find.text('필압 반응'), findsNothing);
+      expect(find.text('손떨림 보정'), findsOneWidget);
 
       final shape = ShapePen();
       Pen.currentPen = shape;
       await pump(tester, shape);
-      expect(find.text('안정화'), findsNothing);
+      expect(find.text('손떨림 보정'), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
@@ -221,7 +389,7 @@ void main() {
       expect(pen.options.size, 7.3);
     });
 
-    testWidgets('sliders change stabilization, pressure and ink flow', (
+    testWidgets('sliders change stabilization, pressure and opacity', (
       tester,
     ) async {
       final pen = Pen.fountainPen();
@@ -237,20 +405,21 @@ void main() {
         await tester.pumpAndSettle();
       }
 
-      await tapEnd('안정화', right: true);
-      expect(pen.options.streamline, greaterThan(0.8));
-      await tapEnd('안정화', right: false);
-      expect(pen.options.streamline, lessThan(0.1));
+      await tapEnd('손떨림 보정', right: true);
+      expect(pen.stabilization, 1);
+      await tapEnd('손떨림 보정', right: false);
+      expect(pen.stabilization, 0);
+      pen.stabilization = 0.35;
 
-      await tapEnd('압력 감도', right: false);
+      await tapEnd('필압 반응', right: false);
       expect(pen.options.thinning, lessThan(0.05));
-      await tapEnd('압력 감도', right: true);
+      await tapEnd('필압 반응', right: true);
       expect(pen.options.thinning, greaterThan(0.95));
 
-      await tapEnd('잉크 유량', right: false);
+      await tapEnd('투명도', right: true);
       expect(pen.inkFlow, lessThan(0.15));
       expect(pen.strokeColor.a, closeTo(pen.color.a * pen.inkFlow, 0.01));
-      await tapEnd('잉크 유량', right: true);
+      await tapEnd('투명도', right: false);
       expect(pen.inkFlow, 1);
       expect(pen.strokeColor, pen.color);
     });

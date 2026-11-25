@@ -5,6 +5,7 @@ import 'package:perfect_freehand/perfect_freehand.dart';
 import 'package:saber/components/hn/hn_pressable.dart';
 import 'package:saber/components/toolbar/size_picker.dart';
 import 'package:saber/data/hn/hn_tuning.dart';
+import 'package:saber/data/hn/one_euro.dart';
 import 'package:saber/data/prefs.dart';
 import 'package:saber/data/tools/highlighter.dart';
 import 'package:saber/data/tools/pen.dart';
@@ -42,7 +43,8 @@ class StrokePreview extends StatelessWidget {
         child: CustomPaint(
           painter: _StrokePreviewPainter(
             size: pen.options.size,
-            stabilization: pen.options.streamline,
+            stabilization: pen.supportsStabilization ? pen.stabilization : 0,
+            streamline: pen.options.streamline,
             smoothing: pen.options.smoothing,
             thinning: pen.options.thinning,
             pressureEnabled: pen.pressureEnabled,
@@ -60,6 +62,7 @@ class _StrokePreviewPainter extends CustomPainter {
   new({
     required this.size,
     required this.stabilization,
+    required this.streamline,
     required this.smoothing,
     required this.thinning,
     required this.pressureEnabled,
@@ -69,7 +72,10 @@ class _StrokePreviewPainter extends CustomPainter {
   });
 
   final double size;
+
+  /// 입력 필터 세기(0~1).
   final double stabilization;
+  final double streamline;
   final double smoothing;
   final double thinning;
   final bool pressureEnabled;
@@ -94,17 +100,20 @@ class _StrokePreviewPainter extends CustomPainter {
     // 굵은 선(형광펜)은 곡선을 납작하게 해서 띠처럼 보이게 한다
     final h = math.max(1.5, canvasSize.height * 0.28 - size * scale * 0.35);
     final cy = canvasSize.height / 2;
-    final points = <PointVector>[
-      for (var i = 0; i <= n; i++)
-        () {
-          final t = i / n;
-          final x = margin + w * t + _noise(i) * 0.9;
-          final y = cy - math.sin(t * math.pi * 2) * h + _noise(i + 97) * 1.4;
-          // 필압 펜은 가운데에서 세게, 양끝에서 약하게
-          final pressure = 0.35 + 0.45 * math.sin(t * math.pi);
-          return PointVector(x / scale, y / scale, pressure);
-        }(),
-    ];
+    // 실제 펜과 같은 입력 필터를 거친다(240Hz 입력이라고 가정).
+    final filter = oneEuroForStrength(stabilization);
+    final points = <PointVector>[];
+    for (var i = 0; i <= n; i++) {
+      final t = i / n;
+      var p = Offset(
+        margin + w * t + _noise(i) * 0.9,
+        cy - math.sin(t * math.pi * 2) * h + _noise(i + 97) * 1.4,
+      );
+      if (filter != null) p = filter.filter(p, 1 / 120);
+      // 필압 펜은 가운데에서 세게, 양끝에서 약하게
+      final pressure = 0.35 + 0.45 * math.sin(t * math.pi);
+      points.add(PointVector(p.dx / scale, p.dy / scale, pressure));
+    }
 
     final outline = getStroke(
       points,
@@ -112,7 +121,7 @@ class _StrokePreviewPainter extends CustomPainter {
         size: size,
         thinning: thinning,
         smoothing: smoothing,
-        streamline: stabilization,
+        streamline: streamline,
         simulatePressure: false,
         start: StrokeEndOptions.start(taperEnabled: taperStart),
         end: StrokeEndOptions.end(taperEnabled: taperEnd),
@@ -132,6 +141,7 @@ class _StrokePreviewPainter extends CustomPainter {
   bool shouldRepaint(covariant _StrokePreviewPainter old) =>
       old.size != size ||
       old.stabilization != stabilization ||
+      old.streamline != streamline ||
       old.smoothing != smoothing ||
       old.thinning != thinning ||
       old.pressureEnabled != pressureEnabled ||
@@ -284,4 +294,6 @@ class _FavoriteSizeButton extends StatelessWidget {
 }
 
 /// 안정화 설명(툴팁).
-const stabilizationTooltip = '획 안정화: 높을수록 선이 매끈해지지만, 선이 펜촉보다 조금 늦게 따라옵니다.';
+const stabilizationTooltip =
+    '손떨림 보정: 천천히 쓸 때의 떨림을 잡고, 빠르게 쓸 때는 바로 따라옵니다. '
+    '너무 높이면 느린 획이 펜촉보다 늦게 따라옵니다.';
