@@ -83,7 +83,7 @@ class ShapePen extends Pen {
         final rect = detectedShape.convertToRect();
         log.info('Detected rectangle: $rect');
         return RectangleStroke(
-          color: color,
+          color: rawStroke.color,
           pressureEnabled: pressureEnabled,
           options: rawStroke.options,
           pageIndex: rawStroke.pageIndex,
@@ -95,7 +95,7 @@ class ShapePen extends Pen {
         final (center, radius) = detectedShape.convertToCircle();
         log.info('Detected circle: c=$center, r=$radius');
         return CircleStroke(
-          color: color,
+          color: rawStroke.color,
           pressureEnabled: pressureEnabled,
           options: rawStroke.options,
           pageIndex: rawStroke.pageIndex,
@@ -109,7 +109,7 @@ class ShapePen extends Pen {
         final polygon = detectedShape.convertToCanonicalPolygon();
         log.info('Detected ${detectedShape.name}');
         return Stroke(
-          color: color,
+          color: rawStroke.color,
           pressureEnabled: pressureEnabled,
           options: rawStroke.options,
           pageIndex: rawStroke.pageIndex,

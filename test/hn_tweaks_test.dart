@@ -1,15 +1,19 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:perfect_freehand/perfect_freehand.dart';
+import 'package:saber/components/hn/hn_popover.dart';
+import 'package:saber/components/hn/quick_wheel.dart';
 import 'package:saber/components/toolbar/hn_pen_extras.dart';
 import 'package:saber/components/toolbar/pen_modal.dart';
 import 'package:saber/components/toolbar/size_picker.dart';
 import 'package:saber/data/flavor_config.dart';
 import 'package:saber/data/hn/hn_tuning.dart';
+import 'package:saber/data/tools/_tool.dart';
 import 'package:saber/data/tools/highlighter.dart';
 import 'package:saber/data/tools/pen.dart';
 import 'package:saber/data/tools/pencil.dart';
 import 'package:saber/data/tools/shape_pen.dart';
+import 'package:sbn/tool_id.dart';
 
 void main() {
   setUpAll(FlavorConfig.setup);
@@ -126,13 +130,13 @@ void main() {
     });
   });
 
-  group('Saber HN: pen options bar', () {
+  group('Saber HN: pen settings card', () {
     Future<void> pump(
       WidgetTester tester,
       Pen pen, {
-      double width = 1200,
+      double height = 900,
     }) async {
-      tester.view.physicalSize = Size(width, 400);
+      tester.view.physicalSize = Size(1000, height);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
       await tester.pumpWidget(
@@ -147,27 +151,39 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('renders without overflow, even on a narrow screen', (
-      tester,
-    ) async {
-      for (final width in [1200.0, 600.0]) {
-        final pen = Pen.fountainPen();
-        pen.options = pen.options.copyWith();
-        Pen.currentPen = pen;
-        await pump(tester, pen, width: width);
-        expect(tester.takeException(), isNull);
-        expect(find.byType(SizePicker), findsOneWidget);
-        expect(find.byType(StrokePreview), findsOneWidget);
-        expect(find.byType(FavoriteSizes), findsOneWidget);
-        expect(find.byType(StabilizationPicker), findsOneWidget);
-      }
-    });
+    Finder sliderLabeled(String label) => find.descendant(
+      of: find.widgetWithText(HnLabeledSlider, label),
+      matching: find.byType(Slider),
+    );
 
-    testWidgets('no stabilization slider for the shape pen', (tester) async {
-      final pen = ShapePen();
+    testWidgets('fountain pen shows all rows without overflow', (tester) async {
+      final pen = Pen.fountainPen();
+      pen.options = pen.options.copyWith();
       Pen.currentPen = pen;
       await pump(tester, pen);
-      expect(find.byType(StabilizationPicker), findsNothing);
+      expect(tester.takeException(), isNull);
+      expect(find.text('브러시 두께'), findsOneWidget);
+      expect(find.text('압력 감도'), findsOneWidget);
+      expect(find.text('잉크 유량'), findsOneWidget);
+      expect(find.text('안정화'), findsOneWidget);
+      expect(find.byType(SizePicker), findsOneWidget);
+      expect(find.byType(StrokePreview), findsOneWidget);
+      expect(find.byType(FavoriteSizes), findsOneWidget);
+    });
+
+    testWidgets('ballpoint hides pressure; shape pen hides stabilization', (
+      tester,
+    ) async {
+      final ballpoint = Pen.ballpointPen();
+      Pen.currentPen = ballpoint;
+      await pump(tester, ballpoint);
+      expect(find.text('압력 감도'), findsNothing);
+      expect(find.text('안정화'), findsOneWidget);
+
+      final shape = ShapePen();
+      Pen.currentPen = shape;
+      await pump(tester, shape);
+      expect(find.text('안정화'), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
@@ -177,9 +193,7 @@ void main() {
       Pen.currentPen = pen;
       await pump(tester, pen);
 
-      final slider = find.byType(SizePicker);
-      final rect = tester.getRect(slider);
-      // 오른쪽 끝 근처를 누르면 최대 굵기에 가까워진다
+      final rect = tester.getRect(find.byType(SizePicker));
       await tester.tapAt(Offset(rect.right - 14, rect.center.dy));
       await tester.pumpAndSettle();
       expect(pen.options.size, greaterThan(20));
@@ -197,38 +211,175 @@ void main() {
         matching: find.byType(GestureDetector),
       );
       expect(favs, findsNWidgets(3));
-
-      // 첫 칸에 현재 굵기(7.3) 저장
       await tester.longPress(favs.at(0));
       await tester.pumpAndSettle();
-
-      // 다른 칸을 눌러 굵기 변경
       await tester.tap(favs.at(1));
       await tester.pumpAndSettle();
       expect(pen.options.size, isNot(7.3));
-
-      // 첫 칸을 누르면 저장해 둔 7.3으로 돌아온다
       await tester.tap(favs.at(0));
       await tester.pumpAndSettle();
       expect(pen.options.size, 7.3);
     });
 
-    testWidgets('stabilization slider changes streamline', (tester) async {
-      final pen = Pen.ballpointPen();
+    testWidgets('sliders change stabilization, pressure and ink flow', (
+      tester,
+    ) async {
+      final pen = Pen.fountainPen();
       pen.options = pen.options.copyWith();
       Pen.currentPen = pen;
       await pump(tester, pen);
 
-      final slider = find.descendant(
-        of: find.byType(StabilizationPicker),
-        matching: find.byType(Slider),
+      Future<void> tapEnd(String label, {required bool right}) async {
+        final r = tester.getRect(sliderLabeled(label));
+        await tester.tapAt(
+          Offset(right ? r.right - 12 : r.left + 12, r.center.dy),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await tapEnd('안정화', right: true);
+      expect(pen.options.streamline, greaterThan(0.8));
+      await tapEnd('안정화', right: false);
+      expect(pen.options.streamline, lessThan(0.1));
+
+      await tapEnd('압력 감도', right: false);
+      expect(pen.options.thinning, lessThan(0.05));
+      await tapEnd('압력 감도', right: true);
+      expect(pen.options.thinning, greaterThan(0.95));
+
+      await tapEnd('잉크 유량', right: false);
+      expect(pen.inkFlow, lessThan(0.15));
+      expect(pen.strokeColor.a, closeTo(pen.color.a * pen.inkFlow, 0.01));
+      await tapEnd('잉크 유량', right: true);
+      expect(pen.inkFlow, 1);
+      expect(pen.strokeColor, pen.color);
+    });
+  });
+
+  group('Saber HN: quick wheel', () {
+    Future<GlobalKey<HnQuickWheelState>> pump(
+      WidgetTester tester, {
+      required Tool Function() tool,
+      required ValueChanged<Tool> setTool,
+      ValueChanged<Color>? setColor,
+      VoidCallback? undo,
+    }) async {
+      tester.view.physicalSize = const Size(1000, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final key = GlobalKey<HnQuickWheelState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) => HnQuickWheel(
+                key: key,
+                currentTool: tool(),
+                setTool: (t) {
+                  setTool(t);
+                  setState(() {});
+                },
+                setColor: (c) {
+                  setColor?.call(c);
+                  setState(() {});
+                },
+                undo: undo ?? () {},
+                redo: () {},
+                canUndo: true,
+                canRedo: false,
+                openSettings: () {},
+                onHide: () {},
+              ),
+            ),
+          ),
+        ),
       );
-      await tester.tapAt(tester.getTopRight(slider) + const Offset(-10, 18));
       await tester.pumpAndSettle();
-      expect(pen.options.streamline, greaterThan(0.75));
-      await tester.tapAt(tester.getTopLeft(slider) + const Offset(10, 18));
+      return key;
+    }
+
+    testWidgets('mini bubble expands; outside tap collapses', (tester) async {
+      Tool current = Pen.fountainPen();
+      final key = await pump(
+        tester,
+        tool: () => current,
+        setTool: (t) => current = t,
+      );
+      expect(find.byIcon(Icons.undo_rounded).hitTestable(), findsNothing);
+      key.currentState!.expand();
       await tester.pumpAndSettle();
-      expect(pen.options.streamline, lessThan(0.15));
+      expect(find.byIcon(Icons.undo_rounded).hitTestable(), findsOneWidget);
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.undo_rounded).hitTestable(), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('undo button and swipe to switch pens', (tester) async {
+      Tool current = Pen.fountainPen();
+      Pen.currentPen = current as Pen;
+      var undone = 0;
+      final key = await pump(
+        tester,
+        tool: () => current,
+        setTool: (t) => current = t,
+        undo: () => undone++,
+      );
+      key.currentState!.expand();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.undo_rounded));
+      await tester.pumpAndSettle();
+      expect(undone, 1);
+
+      // 가운데를 왼쪽으로 두 칸 밀면 만년필 -> 볼펜 -> 연필
+      final center = tester.getCenter(find.byIcon(Icons.swap_horiz_rounded));
+      await tester.dragFrom(
+        center,
+        const Offset(-HnTuning.wheelCarouselStep * 2 - 4, 0),
+      );
+      await tester.pumpAndSettle();
+      expect((current as Pen).toolId, ToolId.pencil);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('size dial and color ring', (tester) async {
+      final pen = Pen.ballpointPen();
+      pen.options = pen.options.copyWith(size: 3);
+      Tool current = pen;
+      Color? picked;
+      final key = await pump(
+        tester,
+        tool: () => current,
+        setTool: (t) => current = t,
+        setColor: (c) => picked = c,
+      );
+      key.currentState!.expand();
+      await tester.pumpAndSettle();
+
+      // 왼쪽 굵기 점 -> 다이얼
+      final wheel = tester.getRect(find.byType(HnPopover));
+      await tester.tapAt(Offset(wheel.center.dx - 102, wheel.center.dy));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('굵기 ·'), findsOneWidget);
+      // 다이얼 오른쪽 아래 끝(시계 방향 끝) 근처를 누르면 최대 굵기에 가깝다
+      final end =
+          wheel.center + Offset.fromDirection(0.25 * 3.14159 * 1.0, 104);
+      await tester.tapAt(end);
+      await tester.pumpAndSettle();
+      expect(pen.options.size, greaterThan(20));
+      // 가운데를 누르면 돌아간다
+      await tester.tapAt(wheel.center);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('굵기 ·'), findsNothing);
+
+      // 오른쪽 색 점 -> 색상 링 -> 맨 위 색 선택
+      await tester.tapAt(Offset(wheel.center.dx + 102, wheel.center.dy));
+      await tester.pumpAndSettle();
+      await tester.tapAt(Offset(wheel.center.dx, wheel.center.dy - 102));
+      await tester.pumpAndSettle();
+      expect(picked, isNotNull);
+      expect(tester.takeException(), isNull);
     });
   });
 }

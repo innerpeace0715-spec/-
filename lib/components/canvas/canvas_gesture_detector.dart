@@ -12,6 +12,7 @@ import 'package:saber/components/canvas/interactive_canvas.dart';
 import 'package:saber/data/editor/page.dart';
 import 'package:saber/data/extensions/change_notifier_extensions.dart';
 import 'package:saber/data/extensions/matrix4_extensions.dart';
+import 'package:saber/data/hn/hn_tuning.dart';
 import 'package:saber/data/prefs.dart';
 import 'package:saber/pages/editor/editor.dart';
 import 'package:vector_math/vector_math_64.dart';
@@ -499,9 +500,12 @@ class CanvasGestureDetectorState extends State<CanvasGestureDetector> {
 
                   // we need a non-zero boundary margin so we can zoom out
                   // past the size of the page (for minScale < 1)
-                  boundaryMargin: .symmetric(
-                    vertical: 0,
-                    horizontal: screenSize.width * 2,
+                  // Saber HN: 마지막 페이지 아래로도 화면 높이의 절반만큼 더
+                  // 내릴 수 있게 한다(확대했을 때 맨 아래에 필기하기 편하도록).
+                  boundaryMargin: .only(
+                    left: screenSize.width * 2,
+                    right: screenSize.width * 2,
+                    bottom: screenSize.height * HnTuning.extraScrollBelowPages,
                   ),
 
                   transformationController: widget._transformationController,

@@ -8,10 +8,23 @@ import 'package:saber/data/tools/pen.dart';
 import 'package:saber/i18n/strings.g.dart';
 
 class SizePicker extends StatefulWidget {
-  const new({super.key, required this.axis, required this.pen, this.onChanged});
+  const new({
+    super.key,
+    required this.axis,
+    required this.pen,
+    this.onChanged,
+    this.length = largeLength,
+    this.showLabel = true,
+  });
 
   final Axis axis;
   final Pen pen;
+
+  /// 슬라이더 길이.
+  final double length;
+
+  /// 왼쪽에 "Size / 값" 라벨을 보일지.
+  final bool showLabel;
 
   /// 굵기가 바뀔 때마다 불린다(미리보기 갱신용).
   final VoidCallback? onChanged;
@@ -63,41 +76,54 @@ class _SizePickerState extends State<SizePicker> {
       direction: widget.axis,
       mainAxisSize: .min,
       children: [
-        SizedBox(
-          width: 34,
-          child: Column(
-            mainAxisSize: .min,
-            children: [
-              Text(
-                t.editor.penOptions.size,
-                style: TextStyle(
-                  color: colorScheme.onSurface.withValues(alpha: 0.8),
-                  fontSize: 10,
-                  height: 1,
+        if (widget.showLabel) ...[
+          SizedBox(
+            width: 34,
+            child: Column(
+              mainAxisSize: .min,
+              children: [
+                Text(
+                  t.editor.penOptions.size,
+                  style: TextStyle(
+                    color: colorScheme.onSurface.withValues(alpha: 0.8),
+                    fontSize: 10,
+                    height: 1,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                prettySize(widget.pen.options.size),
-                style: const TextStyle(
-                  fontFeatures: [FontFeature.tabularFigures()],
+                const SizedBox(height: 2),
+                Text(
+                  prettySize(widget.pen.options.size),
+                  style: const TextStyle(
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
+          const SizedBox(width: 4, height: 4),
+        ],
+        _SizeSlider(
+          pen: widget.pen,
+          axis: widget.axis,
+          length: widget.length,
+          setState: _setState,
         ),
-        const SizedBox(width: 4, height: 4),
-        _SizeSlider(pen: widget.pen, axis: widget.axis, setState: _setState),
       ],
     );
   }
 }
 
 class _SizeSlider extends StatefulWidget {
-  const new({required this.pen, required this.axis, required this.setState});
+  const new({
+    required this.pen,
+    required this.axis,
+    required this.length,
+    required this.setState,
+  });
 
   final Pen pen;
   final Axis axis;
+  final double length;
   final void Function(void Function()) setState;
 
   @override
@@ -116,7 +142,7 @@ class _SizeSliderState extends State<_SizeSlider> {
     final along = widget.axis == .horizontal
         ? localPosition.dx
         : localPosition.dy;
-    return (along - _pad) / SizePicker.largeLength;
+    return (along - _pad) / widget.length;
   }
 
   void _onDrag(Offset localPosition) {
@@ -164,7 +190,7 @@ class _SizeSliderState extends State<_SizeSlider> {
     final isHorizontal = widget.axis == .horizontal;
 
     final painter = CustomPaint(
-      size: const Size(SizePicker.largeLength, SizePicker.smallLength),
+      size: Size(widget.length, SizePicker.smallLength),
       painter: _SizeSliderPainter(
         minSize: pen.sizeMin,
         maxSize: pen.sizeMax,

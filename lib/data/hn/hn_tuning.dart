@@ -73,6 +73,21 @@ abstract final class HnTuning {
     reverseCurve: sheetExitCurve,
   );
 
+  /// 펜 설정 카드가 뜨고 사라지는 시간·곡선.
+  static const popoverEnterDuration = Duration(milliseconds: 360);
+  static const popoverExitDuration = Duration(milliseconds: 150);
+  static const Curve popoverEnterCurve = SpringCurve(dampingRatio: 0.72);
+
+  /// 원형 퀵메뉴 크기.
+  static const double wheelDiameter = 272;
+  static const double wheelMiniDiameter = 58;
+
+  /// 원형 메뉴 펜 넘기기: 이만큼(논리 픽셀) 밀 때마다 펜 하나씩.
+  static const double wheelCarouselStep = 46;
+
+  /// 마지막 페이지 아래로 더 내릴 수 있는 여백(화면 높이 비율).
+  static const extraScrollBelowPages = 0.5;
+
   // ───────────────────────── 진동 ─────────────────────────
 
   /// 모든 진동을 한 번에 끄려면 false.

@@ -8,6 +8,8 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:keybinder/keybinder.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:saber/components/hn/hn_popover.dart';
+import 'package:saber/components/hn/quick_wheel.dart';
 import 'package:saber/components/theming/adaptive_icon.dart';
 import 'package:saber/components/theming/dynamic_material_app.dart';
 import 'package:saber/components/theming/uni_icon.dart';
@@ -94,9 +96,79 @@ class _ToolbarState extends State<Toolbar> {
   ValueNotifier<bool> showColorOptions = ValueNotifier(false);
   ValueNotifier<ToolOptions> toolOptionsType = ValueNotifier(ToolOptions.hide);
 
+  // ── Saber HN: 펜 설정 카드 ──
+  final _penCardPortal = OverlayPortalController();
+  final _penLinks = {
+    ToolOptions.pen: LayerLink(),
+    ToolOptions.pencil: LayerLink(),
+    ToolOptions.highlighter: LayerLink(),
+  };
+  final _penCardTapGroup = Object();
+
+  /// 카드에 보여 줄(또는 사라지는 중인) 펜 종류.
+  var _cardType = ToolOptions.pen;
+  bool get _cardVisible => _penLinks.containsKey(toolOptionsType.value);
+
+  void _onToolOptionsChanged() {
+    final type = toolOptionsType.value;
+    if (_penLinks.containsKey(type)) {
+      _cardType = type;
+      if (!_penCardPortal.isShowing) _penCardPortal.show();
+    }
+    if (mounted) setState(() {});
+  }
+
+  // ── Saber HN: 원형 퀵메뉴 ──
+  final _wheelPortal = OverlayPortalController();
+  final _wheelKey = GlobalKey<HnQuickWheelState>();
+
+  void _syncWheelPortal() {
+    if (stows.hnQuickWheelVisible.value) {
+      if (!_wheelPortal.isShowing) _wheelPortal.show();
+    } else {
+      if (_wheelPortal.isShowing) _wheelPortal.hide();
+    }
+  }
+
+  void _showQuickWheel({bool expand = true}) {
+    stows.hnQuickWheelVisible.value = true;
+    _syncWheelPortal();
+    if (expand) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _wheelKey.currentState?.expand();
+      });
+    }
+  }
+
+  void _toggleQuickWheel() {
+    if (stows.hnQuickWheelVisible.value) {
+      stows.hnQuickWheelVisible.value = false;
+      _syncWheelPortal();
+    } else {
+      _showQuickWheel();
+    }
+  }
+
+  void _openSettingsForCurrentPen() {
+    final tool = widget.currentTool;
+    final Pen pen = tool is Pen ? tool : Pen.currentPen;
+    if (tool != pen) widget.setTool(pen);
+    toolOptionsType.value = switch (pen) {
+      Highlighter() => .highlighter,
+      Pencil() => .pencil,
+      _ => .pen,
+    };
+  }
+
   @override
   void initState() {
     _assignKeybindings();
+
+    toolOptionsType.addListener(_onToolOptionsChanged);
+    stows.hnQuickWheelVisible.addListener(_syncWheelPortal);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncWheelPortal();
+    });
 
     DynamicMaterialApp.addFullscreenListener(_setState);
 
@@ -231,20 +303,11 @@ class _ToolbarState extends State<Toolbar> {
             duration: HnTuning.panelDuration,
             curve: HnTuning.panelCurve,
             fade: true,
-            collapsed: toolOptionsType == .hide,
+            // 펜 설정은 떠 있는 카드로 보여 주므로 여기서는 접는다.
+            collapsed: toolOptionsType != .select,
             child: switch (toolOptionsType) {
-              .hide => const SizedBox.square(dimension: SizePicker.smallLength),
-              .pen => PenModal(
-                getTool: () => Pen.currentPen,
-                setTool: widget.setTool,
-              ),
-              .highlighter => PenModal(
-                getTool: () => Highlighter.currentHighlighter,
-                setTool: widget.setTool,
-              ),
-              .pencil => PenModal(
-                getTool: () => Pencil.currentPencil,
-                setTool: widget.setTool,
+              .hide || .pen || .highlighter || .pencil => const SizedBox.square(
+                dimension: SizePicker.smallLength,
               ),
               .select => SelectionBar(
                 duplicateSelection: widget.duplicateSelection,
@@ -332,62 +395,85 @@ class _ToolbarState extends State<Toolbar> {
             alignment: WrapAlignment.center,
             runSpacing: 8,
             children: [
-              ToolbarIconButton(
-                tooltip: Pen.currentPen.name,
-                selected: widget.currentTool == Pen.currentPen,
-                enabled: !widget.readOnly,
-                onPressed: () {
-                  if (widget.currentTool == Pen.currentPen) {
-                    if (toolOptionsType.value == .pen) {
-                      toolOptionsType.value = .hide;
-                    } else {
-                      toolOptionsType.value = .pen;
-                    }
-                  } else {
-                    toolOptionsType.value = .hide;
-                    widget.setTool(Pen.currentPen);
-                  }
-                },
-                padding: buttonPadding,
-                child: UniIcon(Pen.currentPen.icon, size: 16),
+              TapRegion(
+                groupId: _penCardTapGroup,
+                child: CompositedTransformTarget(
+                  link: _penLinks[ToolOptions.pen]!,
+                  child: ToolbarIconButton(
+                    tooltip: Pen.currentPen.name,
+                    selected: widget.currentTool == Pen.currentPen,
+                    enabled: !widget.readOnly,
+                    onPressed: () {
+                      if (widget.currentTool == Pen.currentPen) {
+                        if (toolOptionsType.value == .pen) {
+                          toolOptionsType.value = .hide;
+                        } else {
+                          toolOptionsType.value = .pen;
+                        }
+                      } else {
+                        toolOptionsType.value = .hide;
+                        widget.setTool(Pen.currentPen);
+                      }
+                    },
+                    onLongPress: _showQuickWheel,
+                    padding: buttonPadding,
+                    child: UniIcon(Pen.currentPen.icon, size: 16),
+                  ),
+                ),
               ),
-              ToolbarIconButton(
-                tooltip: t.editor.pens.pencil,
-                selected: widget.currentTool == Pencil.currentPencil,
-                enabled: !widget.readOnly,
-                onPressed: () {
-                  if (widget.currentTool == Pencil.currentPencil) {
-                    if (toolOptionsType.value == .pencil) {
-                      toolOptionsType.value = .hide;
-                    } else {
-                      toolOptionsType.value = .pencil;
-                    }
-                  } else {
-                    toolOptionsType.value = .hide;
-                    widget.setTool(Pencil.currentPencil);
-                  }
-                },
-                padding: buttonPadding,
-                child: const FaIcon(Pencil.pencilIcon, size: 16),
+              TapRegion(
+                groupId: _penCardTapGroup,
+                child: CompositedTransformTarget(
+                  link: _penLinks[ToolOptions.pencil]!,
+                  child: ToolbarIconButton(
+                    tooltip: t.editor.pens.pencil,
+                    selected: widget.currentTool == Pencil.currentPencil,
+                    enabled: !widget.readOnly,
+                    onPressed: () {
+                      if (widget.currentTool == Pencil.currentPencil) {
+                        if (toolOptionsType.value == .pencil) {
+                          toolOptionsType.value = .hide;
+                        } else {
+                          toolOptionsType.value = .pencil;
+                        }
+                      } else {
+                        toolOptionsType.value = .hide;
+                        widget.setTool(Pencil.currentPencil);
+                      }
+                    },
+                    onLongPress: _showQuickWheel,
+                    padding: buttonPadding,
+                    child: const FaIcon(Pencil.pencilIcon, size: 16),
+                  ),
+                ),
               ),
-              ToolbarIconButton(
-                tooltip: t.editor.pens.highlighter,
-                selected: widget.currentTool == Highlighter.currentHighlighter,
-                enabled: !widget.readOnly,
-                onPressed: () {
-                  if (widget.currentTool == Highlighter.currentHighlighter) {
-                    if (toolOptionsType.value == .highlighter) {
-                      toolOptionsType.value = .hide;
-                    } else {
-                      toolOptionsType.value = .highlighter;
-                    }
-                  } else {
-                    toolOptionsType.value = .hide;
-                    widget.setTool(Highlighter.currentHighlighter);
-                  }
-                },
-                padding: buttonPadding,
-                child: const FaIcon(Highlighter.highlighterIcon, size: 16),
+              TapRegion(
+                groupId: _penCardTapGroup,
+                child: CompositedTransformTarget(
+                  link: _penLinks[ToolOptions.highlighter]!,
+                  child: ToolbarIconButton(
+                    tooltip: t.editor.pens.highlighter,
+                    selected:
+                        widget.currentTool == Highlighter.currentHighlighter,
+                    enabled: !widget.readOnly,
+                    onPressed: () {
+                      if (widget.currentTool ==
+                          Highlighter.currentHighlighter) {
+                        if (toolOptionsType.value == .highlighter) {
+                          toolOptionsType.value = .hide;
+                        } else {
+                          toolOptionsType.value = .highlighter;
+                        }
+                      } else {
+                        toolOptionsType.value = .hide;
+                        widget.setTool(Highlighter.currentHighlighter);
+                      }
+                    },
+                    onLongPress: _showQuickWheel,
+                    padding: buttonPadding,
+                    child: const FaIcon(Highlighter.highlighterIcon, size: 16),
+                  ),
+                ),
               ),
               ValueListenableBuilder(
                 valueListenable: showColorOptions,
@@ -452,6 +538,17 @@ class _ToolbarState extends State<Toolbar> {
                 },
                 padding: buttonPadding,
                 child: const Icon(Symbols.stylus_laser_pointer),
+              ),
+              ValueListenableBuilder(
+                valueListenable: stows.hnQuickWheelVisible,
+                builder: (context, visible, _) => ToolbarIconButton(
+                  tooltip: '원형 퀵메뉴',
+                  selected: visible,
+                  enabled: !widget.readOnly,
+                  onPressed: _toggleQuickWheel,
+                  padding: buttonPadding,
+                  child: const Icon(Icons.adjust_rounded),
+                ),
               ),
               ToolbarIconButton(
                 tooltip: t.editor.toolbar.toggleEraser,
@@ -559,7 +656,7 @@ class _ToolbarState extends State<Toolbar> {
       ),
     ];
 
-    return Flex(
+    final Widget toolbar = Flex(
       direction: isToolbarVertical ? .horizontal : .vertical,
       textDirection: switch (stows.editorToolbarAlignment.value) {
         .left => .rtl,
@@ -573,12 +670,93 @@ class _ToolbarState extends State<Toolbar> {
       },
       children: bars,
     );
+
+    return OverlayPortal(
+      controller: _wheelPortal,
+      overlayChildBuilder: _buildQuickWheel,
+      child: OverlayPortal(
+        controller: _penCardPortal,
+        overlayChildBuilder: _buildPenCard,
+        child: toolbar,
+      ),
+    );
+  }
+
+  Widget _buildPenCard(BuildContext context) {
+    final link = _penLinks[_cardType]!;
+    final (
+      target,
+      follower,
+      offset,
+    ) = switch (stows.editorToolbarAlignment.value) {
+      .up => (Alignment.bottomLeft, Alignment.topLeft, const Offset(-4, 10)),
+      .down => (Alignment.topLeft, Alignment.bottomLeft, const Offset(-4, -10)),
+      .left => (Alignment.topRight, Alignment.topLeft, const Offset(10, -4)),
+      .right => (Alignment.topLeft, Alignment.topRight, const Offset(-10, -4)),
+    };
+    final card = switch (_cardType) {
+      .pencil => PenModal(
+        getTool: () => Pencil.currentPencil,
+        setTool: widget.setTool,
+      ),
+      .highlighter => PenModal(
+        getTool: () => Highlighter.currentHighlighter,
+        setTool: widget.setTool,
+      ),
+      _ => PenModal(getTool: () => Pen.currentPen, setTool: widget.setTool),
+    };
+    return Align(
+      alignment: Alignment.topLeft,
+      child: CompositedTransformFollower(
+        link: link,
+        targetAnchor: target,
+        followerAnchor: follower,
+        offset: offset,
+        showWhenUnlinked: false,
+        child: TapRegion(
+          groupId: _penCardTapGroup,
+          onTapOutside: (_) {
+            if (_cardVisible) toolOptionsType.value = .hide;
+          },
+          child: HnPopover(
+            visible: _cardVisible,
+            alignment: follower,
+            onDismissed: () {
+              if (!_cardVisible) _penCardPortal.hide();
+            },
+            child: card,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuickWheel(BuildContext context) {
+    return Positioned.fill(
+      child: HnQuickWheel(
+        key: _wheelKey,
+        currentTool: widget.currentTool,
+        setTool: widget.setTool,
+        setColor: widget.setColor,
+        undo: widget.undo,
+        redo: widget.redo,
+        canUndo: widget.isUndoPossible,
+        canRedo: widget.isRedoPossible,
+        openSettings: _openSettingsForCurrentPen,
+        onHide: () {
+          stows.hnQuickWheelVisible.value = false;
+          _syncWheelPortal();
+        },
+      ),
+    );
   }
 
   @override
   void dispose() {
     DynamicMaterialApp.removeFullscreenListener(_setState);
     DynamicMaterialApp.setFullscreen(false, updateSystem: true);
+    toolOptionsType.removeListener(_onToolOptionsChanged);
+    stows.hnQuickWheelVisible.removeListener(_syncWheelPortal);
 
     _removeKeybindings();
     super.dispose();

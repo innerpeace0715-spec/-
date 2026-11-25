@@ -301,6 +301,59 @@ class Stows {
         volatile: !_isOnMainIsolate,
       );
 
+  /// Saber HN: 도구별 잉크 유량(불투명도 배율, 0.1~1).
+  final hnInkFlowFountainPen = PlainStow(
+        'hnInkFlowFountainPen',
+        1.0,
+        volatile: !_isOnMainIsolate,
+      ),
+      hnInkFlowBallpointPen = PlainStow(
+        'hnInkFlowBallpointPen',
+        1.0,
+        volatile: !_isOnMainIsolate,
+      ),
+      hnInkFlowPencil = PlainStow(
+        'hnInkFlowPencil',
+        1.0,
+        volatile: !_isOnMainIsolate,
+      ),
+      hnInkFlowShapePen = PlainStow(
+        'hnInkFlowShapePen',
+        1.0,
+        volatile: !_isOnMainIsolate,
+      ),
+      hnInkFlowHighlighter = PlainStow(
+        'hnInkFlowHighlighter',
+        1.0,
+        volatile: !_isOnMainIsolate,
+      );
+
+  PlainStow<double>? hnInkFlowFor(ToolId toolId) => switch (toolId) {
+    .fountainPen => hnInkFlowFountainPen,
+    .ballpointPen => hnInkFlowBallpointPen,
+    .pencil => hnInkFlowPencil,
+    .shapePen => hnInkFlowShapePen,
+    .highlighter => hnInkFlowHighlighter,
+    _ => null,
+  };
+
+  /// Saber HN: 원형 퀵메뉴 표시 여부와 위치(화면 비율 0~1).
+  final hnQuickWheelVisible = PlainStow(
+    'hnQuickWheelVisible',
+    false,
+    volatile: !_isOnMainIsolate,
+  );
+  final hnQuickWheelX = PlainStow(
+    'hnQuickWheelX',
+    0.85,
+    volatile: !_isOnMainIsolate,
+  );
+  final hnQuickWheelY = PlainStow(
+    'hnQuickWheelY',
+    0.6,
+    volatile: !_isOnMainIsolate,
+  );
+
   PlainStow<List<String>>? hnFavoriteSizesFor(ToolId toolId) =>
       switch (toolId) {
         .fountainPen => hnFavoriteSizesFountainPen,

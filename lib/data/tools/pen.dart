@@ -91,6 +91,27 @@ class Pen extends Tool {
     );
   }
 
+  /// 압력 감도(%). 100%가 원본 기본값(thinning 0.5)이다. 범위 0~200%.
+  double get pressureSensitivity => options.thinning * 200;
+  set pressureSensitivity(double percent) {
+    percent = percent.clamp(0, 200).roundToDouble();
+    options.thinning = percent / 200;
+  }
+
+  /// 잉크 유량(0.1~1). 선의 불투명도에 곱해진다.
+  double get inkFlow => stows.hnInkFlowFor(toolId)?.value ?? 1;
+  set inkFlow(double value) {
+    value = ((value.clamp(0.1, 1) * 100).roundToDouble()) / 100;
+    stows.hnInkFlowFor(toolId)?.value = value;
+  }
+
+  /// 실제 획에 쓰일 색(잉크 유량 반영).
+  Color get strokeColor {
+    final flow = inkFlow;
+    if (flow >= 1) return color;
+    return color.withValues(alpha: color.a * flow);
+  }
+
   /// [sizeStep] 단위로 반올림한 굵기를 [sizeMin]~[sizeMax] 안에서 돌려준다.
   ///
   /// 부동소수점 오차(예: 5.700000000000001)가 노트 파일에 남지 않도록
@@ -125,7 +146,7 @@ class Pen extends Tool {
     double? pressure,
   ) {
     currentStroke = Stroke(
-      color: color,
+      color: strokeColor,
       pressureEnabled: pressureEnabled,
       options: options.copyWith(isComplete: false),
       pageIndex: pageIndex,

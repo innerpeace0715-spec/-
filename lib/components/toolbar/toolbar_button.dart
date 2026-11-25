@@ -9,6 +9,7 @@ class ToolbarIconButton extends StatelessWidget {
     this.selected = false,
     this.enabled = true,
     required this.onPressed,
+    this.onLongPress,
     required this.padding,
     required this.child,
   });
@@ -17,6 +18,9 @@ class ToolbarIconButton extends StatelessWidget {
   final bool selected;
   final bool enabled;
   final VoidCallback? onPressed;
+
+  /// 길게 누르기(Saber HN: 펜 버튼은 원형 퀵메뉴 열기).
+  final VoidCallback? onLongPress;
 
   final EdgeInsets padding;
   final Widget child;
@@ -61,6 +65,12 @@ class ToolbarIconButton extends StatelessWidget {
               ? () {
                   HnTuning.selectionHaptic();
                   onPressed();
+                }
+              : null,
+          onLongPress: isEnabled && onLongPress != null
+              ? () {
+                  HnTuning.confirmHaptic();
+                  onLongPress!();
                 }
               : null,
           tooltip: tooltip,
