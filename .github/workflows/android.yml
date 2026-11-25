@@ -20,7 +20,7 @@ jobs:
     name: Build APK
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     timeout-minutes: 60
     steps:
       - name: Checkout code
@@ -77,9 +77,26 @@ jobs:
 
           mkdir -p output
           mv build/app/outputs/flutter-apk/app-release.apk output/$apkName
+          # 항상 같은 이름의 사본: releases/latest/download/SaberHN.apk 로 받을 수 있다
+          cp output/$apkName output/SaberHN.apk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: SaberHN-Android
           path: output/${{ steps.rename_apk.outputs.apkName }}
+
+      # 로그인 없이 받을 수 있도록 Release에도 올린다(태블릿 브라우저용).
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: saberhn-b${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Saber HN build ${{ github.run_number }}
+          body: |
+            Saber HN (행님 개조판) APK — 커밋 ${{ github.sha }}
+            아래 Assets의 .apk를 눌러 받으면 됩니다.
+          files: |
+            output/${{ steps.rename_apk.outputs.apkName }}
+            output/SaberHN.apk
+          make_latest: true
