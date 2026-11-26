@@ -1,0 +1,13 @@
+name: "Install apt dependencies"
+description: "Installs and caches apt dependencies for building Saber"
+
+runs:
+  using: "composite"
+  steps:
+    - name: apt update
+      shell: bash
+      run: sudo apt-get update -yq
+
+    - name: apt install
+      shell: bash
+      run: sudo apt-get install -yqq libgtk-3-dev libx11-dev pkg-config cmake ninja-build curl libcurl4-openssl-dev libblkid-dev libsecret-1-dev libjsoncpp-dev ghostscript libunwind-dev

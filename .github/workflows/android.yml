@@ -1,0 +1,102 @@
+name: Build for Android (HN)
+
+# 행님용 개조판 APK 빌드.
+# - 일반(Regular) APK만 빌드한다. FOSS·AAB·Play 업로드는 뺐다.
+# - SIGNING_KEY 시크릿이 없으면 저장소의 fallback-key.jks로 서명된다.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+    paths-ignore:
+      - "**.md"
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android:
+    name: Build APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: "./.github/shared_workflows/install_apt_dependencies"
+
+      - name: Setup Flutter
+        uses: adil192/setup-flutter-submodule@v3
+        with:
+          flutter-path: submodules/flutter
+          no-save-caches: true
+
+      - name: Restore cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            .dart_tool/
+            .flutter-plugins-dependencies
+            build/
+            packages/**/.dart_tool/
+            packages/**/.flutter-plugins-dependencies
+            packages/**/pubspec.lock
+            ~/.dartServer/
+            ~/.dart-tool/
+          key: ${{ runner.OS }}-saber-hn-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.OS }}-saber-hn-
+
+      - name: Setup Android build tools
+        run: |
+          ANDROID_NDK=/usr/local/lib/android/sdk/ndk/29.0.14206865
+          echo "ANDROID_NDK=$ANDROID_NDK" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK" >> $GITHUB_ENV
+
+          echo "JAVA_HOME=$JAVA_HOME_25_X64" >> $GITHUB_ENV
+
+      - name: Disable Flutter CLI animations
+        run: flutter config --no-cli-animations
+
+      - name: Build apk
+        run: flutter build apk --dart-define=UPDATE_CHECK="false"
+
+      - name: Rename apk
+        id: rename_apk
+        run: |
+          buildName=$(grep -oP "(?<=buildName = ').*(?=')" lib/data/version.dart)
+          shortSha=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          apkName="SaberHN_v${buildName}_${shortSha}.apk"
+          echo "apkName=$apkName" >> $GITHUB_OUTPUT
+
+          mkdir -p output
+          mv build/app/outputs/flutter-apk/app-release.apk output/$apkName
+          # 항상 같은 이름의 사본: releases/latest/download/SaberHN.apk 로 받을 수 있다
+          cp output/$apkName output/SaberHN.apk
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: SaberHN-Android
+          path: output/${{ steps.rename_apk.outputs.apkName }}
+
+      # 로그인 없이 받을 수 있도록 Release에도 올린다(태블릿 브라우저용).
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: saberhn-b${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Saber HN build ${{ github.run_number }}
+          body: |
+            Saber HN (행님 개조판) APK — 커밋 ${{ github.sha }}
+            아래 Assets의 .apk를 눌러 받으면 됩니다.
+          files: |
+            output/${{ steps.rename_apk.outputs.apkName }}
+            output/SaberHN.apk
+          make_latest: true
